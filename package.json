@@ -1,0 +1,27 @@
+{
+  "name": "place-to-all-back",
+  "version": "1.0.0",
+  "description": "Crypto wallet API - transfer, buy, sell",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "test:e2e": "node scripts/test-flow.js",
+    "test:user-wallet": "node scripts/test-user-wallet.js",
+    "test:user-buy": "node scripts/test-user-buy.js",
+    "test:payments-flow": "node scripts/test-payments-flow.js",
+    "fund:sandbox": "node scripts/fund-sandbox-wallets.js",
+    "check:instant-test-eth": "node scripts/check-instant-test-eth.js",
+    "check:buy-11-eth": "node scripts/check-buy-11-eth.js",
+    "check:dashboard-wallets": "node scripts/check-dashboard-wallets.js"
+  },
+  "dependencies": {
+    "@coinbase/cdp-sdk": "^1.45.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.16.0",
+    "express": "^4.21.0"
+  }
+}
