@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { supabase } from '../index.js';
+import { supabase } from '../db.js';
 
 export const walletsRouter = Router();
 

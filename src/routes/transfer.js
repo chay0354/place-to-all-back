@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { supabase } from '../index.js';
+import { supabase } from '../db.js';
 import { applyFee, recordFee } from '../lib/fee.js';
 
 export const transferRouter = Router();

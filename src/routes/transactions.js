@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { supabase } from '../index.js';
+import { supabase } from '../db.js';
 import { getSepoliaTransactions } from '../lib/etherscan-sepolia.js';
 
 export const transactionsRouter = Router();

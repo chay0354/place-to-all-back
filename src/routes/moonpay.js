@@ -7,7 +7,7 @@ import { Router } from 'express';
 import { getSignedMoonPayUrl, isEvmCurrency } from '../lib/moonpay.js';
 import { applyFee, recordFee } from '../lib/fee.js';
 import { splitAndSendEth } from '../lib/send-eth.js';
-import { supabase } from '../index.js';
+import { supabase } from '../db.js';
 
 const platformReceivesMoonPay = () =>
   process.env.PLATFORM_RECEIVES_MOONPAY === 'true' || process.env.PLATFORM_RECEIVES_MOONPAY === '1';

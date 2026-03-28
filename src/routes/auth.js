@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { supabase } from '../index.js';
+import { supabase } from '../db.js';
 
 const authRouter = Router();
 const MAX_AGE_SECONDS = 120; // Only confirm users created in the last 2 minutes

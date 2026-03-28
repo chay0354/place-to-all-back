@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { createBuyQuote, createSellQuote, getSpotPriceUsd, createWallet, getSupportedCryptoCurrencies, getWalletBalancesFromCDPAllNetworks } from '../lib/coinbase.js';
 import { getSepoliaBalance } from '../lib/etherscan-sepolia.js';
-import { supabase } from '../index.js';
+import { supabase } from '../db.js';
 
 export const coinbaseRouter = Router();
 
