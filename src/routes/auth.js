@@ -4,7 +4,7 @@ import { supabase } from '../db.js';
 const authRouter = Router();
 const MAX_AGE_SECONDS = 120; // Only confirm users created in the last 2 minutes
 
-/** GET /api/auth/referral-preview?ref=uuid — public; for register UI (agent vs super_agent invite). */
+/** GET /api/auth/referral-preview?ref=uuid — public; returns recruiter role for register UI. */
 authRouter.get('/referral-preview', async (req, res) => {
   try {
     const ref = String(req.query.ref || '').trim();
@@ -22,7 +22,7 @@ authRouter.get('/referral-preview', async (req, res) => {
 /**
  * POST /api/auth/confirm-email
  * Body: { userId, role?: 'regular' | 'agent', referredBy?: string }
- * Super / super-super agent is never set here — only via admin. referredBy = agent → regular. referredBy = super_agent|super_super_agent → agent under that recruiter.
+ * referredBy = agent → regular. referredBy = super_agent → agent. referredBy = super_super_agent → super_agent (no client-chosen role when referredBy is set).
  */
 authRouter.post('/confirm-email', async (req, res) => {
   try {
@@ -57,7 +57,10 @@ authRouter.post('/confirm-email', async (req, res) => {
       if (!refProfile || (refProfile.role !== 'agent' && refProfile.role !== 'super_agent' && refProfile.role !== 'super_super_agent')) {
         return res.status(400).json({ error: 'Invalid referral link' });
       }
-      if (refProfile.role === 'super_agent' || refProfile.role === 'super_super_agent') {
+      if (refProfile.role === 'super_super_agent') {
+        role = 'super_agent';
+        referred_by_id = referredBy;
+      } else if (refProfile.role === 'super_agent') {
         role = 'agent';
         referred_by_id = referredBy;
       } else {

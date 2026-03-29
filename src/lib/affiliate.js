@@ -25,6 +25,9 @@ export async function resolveSuperAgentUplineForBuyer(userId) {
   }
   if (p.role === 'regular' && p.referred_by_id) {
     const { data: ref } = await supabase.from('profiles').select('role, referred_by_id').eq('id', p.referred_by_id).maybeSingle();
+    if (ref?.role === 'super_agent') {
+      return p.referred_by_id;
+    }
     if (ref?.role === 'agent' && ref.referred_by_id) {
       const { data: up } = await supabase.from('profiles').select('role').eq('id', ref.referred_by_id).maybeSingle();
       if (isSuperUplineRole(up?.role)) return ref.referred_by_id;

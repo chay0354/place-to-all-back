@@ -26,7 +26,7 @@ profileRouter.get('/', async (req, res) => {
 });
 
 /**
- * GET /api/profile/downline — agents under a super agent, or regular users under an agent.
+ * GET /api/profile/downline — super_super: agent + super_agent recruits; super_agent: agents only; agent: regulars.
  * Requires X-User-Id. No emails for other users unless we enrich (optional).
  */
 profileRouter.get('/downline', async (req, res) => {
@@ -43,25 +43,28 @@ profileRouter.get('/downline', async (req, res) => {
     if (meErr) throw meErr;
     const role = me?.role || 'regular';
 
-    let targetRole;
     let kind;
-    if (role === 'super_agent' || role === 'super_super_agent') {
-      targetRole = 'agent';
+    let query = supabase
+      .from('profiles')
+      .select('id, username, display_name, role, created_at')
+      .eq('referred_by_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(500);
+
+    if (role === 'super_super_agent') {
       kind = 'agents';
+      query = query.in('role', ['agent', 'super_agent']);
+    } else if (role === 'super_agent') {
+      kind = 'agents';
+      query = query.eq('role', 'agent');
     } else if (role === 'agent') {
-      targetRole = 'regular';
       kind = 'regulars';
+      query = query.eq('role', 'regular');
     } else {
       return res.json({ kind: 'none', members: [] });
     }
 
-    const { data: rows, error: qErr } = await supabase
-      .from('profiles')
-      .select('id, username, display_name, role, created_at')
-      .eq('referred_by_id', userId)
-      .eq('role', targetRole)
-      .order('created_at', { ascending: false })
-      .limit(500);
+    const { data: rows, error: qErr } = await query;
 
     if (qErr) throw qErr;
 
