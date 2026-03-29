@@ -1,5 +1,13 @@
 import { Router } from 'express';
-import { createBuyQuote, createSellQuote, getSpotPriceUsd, createWallet, getSupportedCryptoCurrencies, getWalletBalancesFromCDPAllNetworks } from '../lib/coinbase.js';
+import {
+  createBuyQuote,
+  createSellQuote,
+  getSpotPriceUsd,
+  createWallet,
+  getSupportedCryptoCurrencies,
+  getWalletBalancesFromCDPAllNetworks,
+  getBuyableCurrencyCodesOrdered,
+} from '../lib/coinbase.js';
 import { getSepoliaBalance } from '../lib/etherscan-sepolia.js';
 import { supabase } from '../db.js';
 
@@ -224,38 +232,39 @@ coinbaseRouter.get('/currencies', async (req, res) => {
   }
 });
 
-/** Buy page: coins we show. Preferred order; rest from Coinbase support. */
-const BUY_PAGE_ORDER = [
-  'BTC', 'ETH', 'SOL', 'XRP', 'ADA', 'DOGE', 'USDT', 'USDC', 'DOT', 'MATIC', 'LTC', 'AVAX', 'LINK', 'UNI', 'ATOM', 'XLM', 'ALGO', 'FIL', 'VET', 'TRX', 'NEAR', 'APT', 'ARB', 'OP', 'INJ', 'IMX',
-  'DAI', 'BNB', 'SHIB', 'PEPE', 'FLOKI', 'CRO', 'FTM', 'AAVE', 'SUSHI', 'COMP', 'MKR', 'GRT', 'SNX', 'CRV', 'BAT', 'ENJ', 'MANA', 'SAND', 'AXS', 'LRC', 'CELO',
-];
-const BUY_PAGE_CODES = new Set(BUY_PAGE_ORDER.map((c) => c.toUpperCase()));
-
 /**
  * GET /api/coinbase/currencies/buy
  * Returns currencies for the buy page (Rapyd + instant test): BTC, ETH, SOL, USDT, etc.
  */
 coinbaseRouter.get('/currencies/buy', async (req, res) => {
   try {
-    let list = [];
-    try {
-      list = await getSupportedCryptoCurrencies();
-    } catch (_) {}
-    const listSet = new Set((list || []).map((c) => (c || '').toUpperCase()));
-    const allowed = list.length
-      ? list.filter((code) => BUY_PAGE_CODES.has((code || '').toUpperCase()))
-      : [...BUY_PAGE_ORDER];
-    const ordered = BUY_PAGE_ORDER.filter((c) => listSet.has(c) || !list.length);
-    const rest = allowed.filter((c) => !ordered.includes(c));
-    let buyable = ordered.length || rest.length ? [...ordered, ...rest.sort()] : BUY_PAGE_ORDER.slice(0, 30);
-    const seen = new Set(buyable.map((c) => c.toUpperCase()));
-    for (const c of BUY_PAGE_ORDER) {
-      if (!seen.has(c)) {
-        buyable = [c, ...buyable];
-        seen.add(c);
-      }
-    }
+    const buyable = await getBuyableCurrencyCodesOrdered();
     res.json({ currencies: buyable.map((code) => ({ code })) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /api/coinbase/market-overview
+ * USD spot per asset using the same getSpotPriceUsd as GET /api/coinbase/price (Coinbase public API).
+ */
+coinbaseRouter.get('/market-overview', async (req, res) => {
+  try {
+    const codes = await getBuyableCurrencyCodesOrdered();
+    const BATCH = 6;
+    const assets = [];
+    for (let i = 0; i < codes.length; i += BATCH) {
+      const chunk = codes.slice(i, i + BATCH);
+      const part = await Promise.all(
+        chunk.map(async (code) => {
+          const priceUsd = await getSpotPriceUsd(code);
+          return { code, priceUsd };
+        }),
+      );
+      assets.push(...part);
+    }
+    res.json({ assets, updatedAt: new Date().toISOString() });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

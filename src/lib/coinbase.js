@@ -67,6 +67,39 @@ export async function isSupportedCrypto(code) {
   return list.includes((code || '').toUpperCase());
 }
 
+/** Preferred order for buy UI and market overview (same curated set as /currencies/buy). */
+export const BUY_PAGE_ORDER = [
+  'BTC', 'ETH', 'SOL', 'XRP', 'ADA', 'DOGE', 'USDT', 'USDC', 'DOT', 'MATIC', 'LTC', 'AVAX', 'LINK', 'UNI', 'ATOM', 'XLM', 'ALGO', 'FIL', 'VET', 'TRX', 'NEAR', 'APT', 'ARB', 'OP', 'INJ', 'IMX',
+  'DAI', 'BNB', 'SHIB', 'PEPE', 'FLOKI', 'CRO', 'FTM', 'AAVE', 'SUSHI', 'COMP', 'MKR', 'GRT', 'SNX', 'CRV', 'BAT', 'ENJ', 'MANA', 'SAND', 'AXS', 'LRC', 'CELO',
+];
+
+/**
+ * Ordered list of buy-page / market tickers (intersection with Coinbase support when available).
+ * Mirrors GET /api/coinbase/currencies/buy logic.
+ */
+export async function getBuyableCurrencyCodesOrdered() {
+  let list = [];
+  try {
+    list = await getSupportedCryptoCurrencies();
+  } catch (_) {}
+  const buyPageCodes = new Set(BUY_PAGE_ORDER.map((c) => c.toUpperCase()));
+  const listSet = new Set((list || []).map((c) => (c || '').toUpperCase()));
+  const allowed = list.length
+    ? list.filter((code) => buyPageCodes.has((code || '').toUpperCase()))
+    : [...BUY_PAGE_ORDER];
+  const ordered = BUY_PAGE_ORDER.filter((c) => listSet.has(c) || !list.length);
+  const rest = allowed.filter((c) => !ordered.includes(c));
+  let buyable = ordered.length || rest.length ? [...ordered, ...rest.sort()] : BUY_PAGE_ORDER.slice(0, 30);
+  const seen = new Set(buyable.map((c) => c.toUpperCase()));
+  for (const c of BUY_PAGE_ORDER) {
+    if (!seen.has(c)) {
+      buyable = [c, ...buyable];
+      seen.add(c);
+    }
+  }
+  return buyable;
+}
+
 /**
  * Get current spot price for a crypto asset in USD from Coinbase public API.
  * @param {string} assetId - e.g. btc, eth, usdt
