@@ -177,14 +177,7 @@ adminRouter.post('/promote-to-super-super-agent', async (req, res) => {
       return res.status(400).json({ error: 'Only users with the super agent role can be promoted to super super agent' });
     }
 
-    const countMap = await getInvitedCountsByReferrerIds([targetUserId]);
-    const invited = countMap[targetUserId] ?? 0;
-    if (invited > 0) {
-      return res.status(400).json({
-        error: `Super agent can be promoted to super super agent only with no invited users (no profiles with referred_by_id = this user). Currently: ${invited}.`,
-      });
-    }
-
+    // Unlike agent→super, we do not require zero downline: super agents always have agent recruits via invite link.
     const updated_at = new Date().toISOString();
     const { error: updErr } = await supabase
       .from('profiles')
