@@ -4,19 +4,22 @@ import { generatePaymentLinkToken, getActivePaymentLinkByToken } from '../lib/pa
 
 export const paymentLinksRouter = Router();
 
-async function assertAgent(userId) {
+const PAYMENT_LINK_OWNER_ROLES = new Set(['regular', 'agent', 'super_agent', 'super_super_agent', 'admin']);
+
+async function assertCanManagePaymentLinks(userId) {
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', userId).maybeSingle();
-  if (!profile || (profile.role !== 'agent' && profile.role !== 'super_agent' && profile.role !== 'super_super_agent')) {
-    throw new Error('Only agent or super-agent accounts can manage payment links');
+  const role = profile?.role || 'regular';
+  if (!PAYMENT_LINK_OWNER_ROLES.has(role)) {
+    throw new Error('Your account type cannot manage payment links');
   }
 }
 
-/** POST /api/payment-links — create link (agent only) */
+/** POST /api/payment-links — create link */
 paymentLinksRouter.post('/', async (req, res) => {
   try {
     const userId = req.headers['x-user-id'];
     if (!userId) return res.status(401).json({ error: 'Missing X-User-Id' });
-    await assertAgent(userId);
+    await assertCanManagePaymentLinks(userId);
 
     const { currency = 'USDT', amount, title } = req.body;
     const code = String(currency || 'USDT').toUpperCase();
@@ -46,12 +49,12 @@ paymentLinksRouter.post('/', async (req, res) => {
   }
 });
 
-/** GET /api/payment-links — list my links (agent only) */
+/** GET /api/payment-links — list my links */
 paymentLinksRouter.get('/', async (req, res) => {
   try {
     const userId = req.headers['x-user-id'];
     if (!userId) return res.status(401).json({ error: 'Missing X-User-Id' });
-    await assertAgent(userId);
+    await assertCanManagePaymentLinks(userId);
 
     const { data, error } = await supabase
       .from('payment_links')

@@ -21,14 +21,19 @@ export async function getActivePaymentLinkByToken(token) {
 }
 
 /**
- * Validate token belongs to agent (beneficiary).
+ * Validate token and that the link credits this user (any role).
  * @param {string} token
- * @param {string} agentUserId
+ * @param {string} beneficiaryUserId
  */
-export async function assertValidPaymentLinkForAgent(token, agentUserId) {
+export async function assertValidPaymentLinkForBeneficiary(token, beneficiaryUserId) {
   const link = await getActivePaymentLinkByToken(token);
-  if (!link || link.agent_user_id !== agentUserId) {
+  if (!link || link.agent_user_id !== beneficiaryUserId) {
     throw new Error('Invalid or expired payment link');
   }
   return link;
+}
+
+/** @deprecated Use assertValidPaymentLinkForBeneficiary */
+export async function assertValidPaymentLinkForAgent(token, agentUserId) {
+  return assertValidPaymentLinkForBeneficiary(token, agentUserId);
 }
