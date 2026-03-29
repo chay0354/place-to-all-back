@@ -45,7 +45,7 @@ profileRouter.get('/downline', async (req, res) => {
 
     let targetRole;
     let kind;
-    if (role === 'super_agent') {
+    if (role === 'super_agent' || role === 'super_super_agent') {
       targetRole = 'agent';
       kind = 'agents';
     } else if (role === 'agent') {

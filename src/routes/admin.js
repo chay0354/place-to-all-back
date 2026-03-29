@@ -42,7 +42,7 @@ adminRouter.get('/agents', async (req, res) => {
     const { data: rows, error } = await supabase
       .from('profiles')
       .select('id, username, display_name, referred_by_id, created_at, role')
-      .in('role', ['agent', 'super_agent'])
+      .in('role', ['agent', 'super_agent', 'super_super_agent'])
       .order('created_at', { ascending: false })
       .limit(500);
 
@@ -151,6 +151,48 @@ adminRouter.post('/promote-to-super-agent', async (req, res) => {
 
     if (updErr) throw updErr;
     res.json({ ok: true, id: targetUserId, role: 'super_agent' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * POST /api/admin/promote-to-super-super-agent
+ * Body: { targetUserId } — target must currently be role super_agent
+ */
+adminRouter.post('/promote-to-super-super-agent', async (req, res) => {
+  try {
+    const targetUserId = String(req.body?.targetUserId || '').trim();
+    if (!targetUserId) return res.status(400).json({ error: 'targetUserId required' });
+
+    const { data: target, error: fetchErr } = await supabase
+      .from('profiles')
+      .select('id, role')
+      .eq('id', targetUserId)
+      .maybeSingle();
+
+    if (fetchErr) throw fetchErr;
+    if (!target) return res.status(404).json({ error: 'User not found' });
+    if (target.role !== 'super_agent') {
+      return res.status(400).json({ error: 'Only users with the super agent role can be promoted to super super agent' });
+    }
+
+    const countMap = await getInvitedCountsByReferrerIds([targetUserId]);
+    const invited = countMap[targetUserId] ?? 0;
+    if (invited > 0) {
+      return res.status(400).json({
+        error: `Super agent can be promoted to super super agent only with no invited users (no profiles with referred_by_id = this user). Currently: ${invited}.`,
+      });
+    }
+
+    const updated_at = new Date().toISOString();
+    const { error: updErr } = await supabase
+      .from('profiles')
+      .update({ role: 'super_super_agent', updated_at })
+      .eq('id', targetUserId);
+
+    if (updErr) throw updErr;
+    res.json({ ok: true, id: targetUserId, role: 'super_super_agent' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

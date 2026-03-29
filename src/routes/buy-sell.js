@@ -2,7 +2,12 @@ import { Router } from 'express';
 import { supabase } from '../db.js';
 import { createBuyQuote, getSpotPriceUsd, isSupportedCrypto } from '../lib/coinbase.js';
 import { applyFee, recordFee, computeBuySplit, recordBuySystemFee } from '../lib/fee.js';
-import { getBuyCommissionFlags, recordAgentCommission, recordSuperAgentCommission } from '../lib/affiliate.js';
+import {
+  getBuyCommissionFlags,
+  recordAgentCommission,
+  recordSuperAgentCommission,
+  recordSuperSuperAgentCommission,
+} from '../lib/affiliate.js';
 import { assertValidPaymentLinkForAgent } from '../lib/payment-link.js';
 
 const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000001';
@@ -58,7 +63,7 @@ export async function fulfillBuyFromFiat(payerUserId, currencyCode, fiatAmount, 
   if (!amountNum || amountNum <= 0) throw new Error('Coinbase quote did not return a valid crypto amount');
 
   const flags = await getBuyCommissionFlags(payerUserId);
-  const { userNet, systemFee, agentFee, superAgentFee } = computeBuySplit(amountNum, flags);
+  const { userNet, systemFee, agentFee, superAgentFee, superSuperAgentFee } = computeBuySplit(amountNum, flags);
 
   const treasury = await getOrCreateTreasuryWallet(code);
 
@@ -134,6 +139,9 @@ export async function fulfillBuyFromFiat(payerUserId, currencyCode, fiatAmount, 
   if (superAgentFee > 0) {
     await recordSuperAgentCommission(payerUserId, code, amountNum, walletId);
   }
+  if (superSuperAgentFee > 0) {
+    await recordSuperSuperAgentCommission(payerUserId, code, amountNum, walletId);
+  }
 
   return { transaction: tx, newBalance };
 }
@@ -184,7 +192,7 @@ buySellRouter.post('/buy', async (req, res) => {
       }
 
       const flags = await getBuyCommissionFlags(payerUserId);
-      const { userNet, systemFee, agentFee, superAgentFee } = computeBuySplit(amountNum, flags);
+      const { userNet, systemFee, agentFee, superAgentFee, superSuperAgentFee } = computeBuySplit(amountNum, flags);
 
       const { data: userWallet, error: userErr } = await supabase
         .from('wallets')
@@ -237,6 +245,9 @@ buySellRouter.post('/buy', async (req, res) => {
       if (superAgentFee > 0) {
         await recordSuperAgentCommission(payerUserId, code, amountNum, walletId);
       }
+      if (superSuperAgentFee > 0) {
+        await recordSuperSuperAgentCommission(payerUserId, code, amountNum, walletId);
+      }
 
       console.log('[instant-test] balance before', { creditUserId, payerUserId, currency: code, balance: balanceBefore });
       console.log('[instant-test] transaction', { id: tx?.id, wallet_id: walletId, amount: userNet, type: 'buy', currency: code });
@@ -261,7 +272,7 @@ buySellRouter.post('/buy', async (req, res) => {
     const amountNum = amountVal;
 
     const flags = await getBuyCommissionFlags(payerUserId);
-    const { userNet, systemFee, agentFee, superAgentFee } = computeBuySplit(amountNum, flags);
+    const { userNet, systemFee, agentFee, superAgentFee, superSuperAgentFee } = computeBuySplit(amountNum, flags);
 
     const treasury = await getOrCreateTreasuryWallet(code);
 
@@ -334,6 +345,9 @@ buySellRouter.post('/buy', async (req, res) => {
     }
     if (superAgentFee > 0) {
       await recordSuperAgentCommission(payerUserId, code, amountNum, walletId);
+    }
+    if (superSuperAgentFee > 0) {
+      await recordSuperSuperAgentCommission(payerUserId, code, amountNum, walletId);
     }
 
     res.status(201).json({ success: true, transaction: tx, new_balance: newBalance });

@@ -10,7 +10,7 @@ authRouter.get('/referral-preview', async (req, res) => {
     const ref = String(req.query.ref || '').trim();
     if (!ref) return res.json({ valid: false, recruiterRole: null });
     const { data } = await supabase.from('profiles').select('role').eq('id', ref).maybeSingle();
-    if (!data || (data.role !== 'agent' && data.role !== 'super_agent')) {
+    if (!data || (data.role !== 'agent' && data.role !== 'super_agent' && data.role !== 'super_super_agent')) {
       return res.json({ valid: false, recruiterRole: null });
     }
     res.json({ valid: true, recruiterRole: data.role });
@@ -22,7 +22,7 @@ authRouter.get('/referral-preview', async (req, res) => {
 /**
  * POST /api/auth/confirm-email
  * Body: { userId, role?: 'regular' | 'agent', referredBy?: string }
- * Super agent is never set here — only via admin after signup as agent. referredBy = agent → regular. referredBy = super_agent → agent under that super.
+ * Super / super-super agent is never set here — only via admin. referredBy = agent → regular. referredBy = super_agent|super_super_agent → agent under that recruiter.
  */
 authRouter.post('/confirm-email', async (req, res) => {
   try {
@@ -54,10 +54,10 @@ authRouter.post('/confirm-email', async (req, res) => {
         .select('id, role')
         .eq('id', referredBy)
         .maybeSingle();
-      if (!refProfile || (refProfile.role !== 'agent' && refProfile.role !== 'super_agent')) {
+      if (!refProfile || (refProfile.role !== 'agent' && refProfile.role !== 'super_agent' && refProfile.role !== 'super_super_agent')) {
         return res.status(400).json({ error: 'Invalid referral link' });
       }
-      if (refProfile.role === 'super_agent') {
+      if (refProfile.role === 'super_agent' || refProfile.role === 'super_super_agent') {
         role = 'agent';
         referred_by_id = referredBy;
       } else {

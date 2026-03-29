@@ -50,7 +50,9 @@ transactionsRouter.get('/', async (req, res) => {
       else if (tx.type === 'sell') description = 'Sell';
       else if (tx.type === 'transfer') description = isOut ? 'Transfer sent' : 'Transfer received';
       else if (tx.type === 'affiliate') {
-        description = tx.metadata?.kind === 'super_upline' ? 'Super-agent commission' : 'Affiliate commission';
+        if (tx.metadata?.kind === 'super_super_upline') description = 'Super super agent commission';
+        else if (tx.metadata?.kind === 'super_upline') description = 'Super-agent commission';
+        else description = 'Affiliate commission';
       }
       if (tx.metadata?.source === 'moonpay') description = 'Buy (MoonPay)';
 

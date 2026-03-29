@@ -6,7 +6,7 @@ export const paymentLinksRouter = Router();
 
 async function assertAgent(userId) {
   const { data: profile } = await supabase.from('profiles').select('role').eq('id', userId).maybeSingle();
-  if (!profile || (profile.role !== 'agent' && profile.role !== 'super_agent')) {
+  if (!profile || (profile.role !== 'agent' && profile.role !== 'super_agent' && profile.role !== 'super_super_agent')) {
     throw new Error('Only agent or super-agent accounts can manage payment links');
   }
 }

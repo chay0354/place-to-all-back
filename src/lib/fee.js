@@ -1,8 +1,9 @@
 /**
  * Buy splits (all deducted from gross crypto — payer bears the cost):
  * - 4% admin (system) always
- * - 2% direct affiliate when buyer is a regular user referred by an agent or super_agent
- * - 4% super-agent upline when buyer is under a super’s agent network
+ * - 2% direct affiliate when buyer is a regular user referred by an agent or super-tier recruiter
+ * - 4% first super upline when buyer is under that network (super_agent or super_super_agent head)
+ * - 4% super-super upline when a super_super_agent sits above the first upline recipient
  * Remainder credits the recipient wallet.
  */
 
@@ -13,19 +14,21 @@ export const SYSTEM_FEE_USER_ID = process.env.SYSTEM_FEE_USER_ID || '00000000-00
 const BUY_SYSTEM_FEE_RATE = 0.04;
 const BUY_AGENT_FEE_RATE = 0.02;
 const BUY_SUPER_UPLINE_RATE = 0.04;
+const BUY_SUPER_SUPER_UPLINE_RATE = 0.04;
 
 /**
  * @param {number} grossAmount
- * @param {{ hasAffiliate?: boolean, hasSuperUpline?: boolean }} flags
- * @returns {{ userNet: number, systemFee: number, agentFee: number, superAgentFee: number }}
+ * @param {{ hasAffiliate?: boolean, hasSuperUpline?: boolean, hasSuperSuperUpline?: boolean }} flags
+ * @returns {{ userNet: number, systemFee: number, agentFee: number, superAgentFee: number, superSuperAgentFee: number }}
  */
 export function computeBuySplit(grossAmount, flags = {}) {
-  const { hasAffiliate = false, hasSuperUpline = false } = flags;
+  const { hasAffiliate = false, hasSuperUpline = false, hasSuperSuperUpline = false } = flags;
   const systemFee = Math.max(0, grossAmount * BUY_SYSTEM_FEE_RATE);
   const agentFee = hasAffiliate ? Math.max(0, grossAmount * BUY_AGENT_FEE_RATE) : 0;
   const superAgentFee = hasSuperUpline ? Math.max(0, grossAmount * BUY_SUPER_UPLINE_RATE) : 0;
-  const userNet = Math.max(0, grossAmount - systemFee - agentFee - superAgentFee);
-  return { userNet, systemFee, agentFee, superAgentFee };
+  const superSuperAgentFee = hasSuperSuperUpline ? Math.max(0, grossAmount * BUY_SUPER_SUPER_UPLINE_RATE) : 0;
+  const userNet = Math.max(0, grossAmount - systemFee - agentFee - superAgentFee - superSuperAgentFee);
+  return { userNet, systemFee, agentFee, superAgentFee, superSuperAgentFee };
 }
 
 /**
