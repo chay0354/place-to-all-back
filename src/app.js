@@ -15,11 +15,30 @@ import { adminRouter } from './routes/admin.js';
 
 const app = express();
 
+/**
+ * Browser clients use JWT headers, not cross-site cookies — credentials: false so
+ * Access-Control-Allow-Origin can mirror the request Origin (payment link page → API on another host).
+ * Optional CORS_ORIGINS: comma-separated exact origins; if set, only those get CORS headers.
+ * If unset, any requesting Origin is allowed (typical for dev / quick Vercel setup).
+ */
+function parseCorsOrigins() {
+  const raw = process.env.CORS_ORIGINS || '';
+  return raw
+    .split(',')
+    .map((s) => s.trim().replace(/\/+$/, ''))
+    .filter(Boolean);
+}
+
+const corsAllowlist = parseCorsOrigins();
+
 const corsOptions = {
   origin(origin, callback) {
-    callback(null, true);
+    if (corsAllowlist.length === 0) return callback(null, true);
+    if (!origin) return callback(null, false);
+    if (corsAllowlist.includes(origin)) return callback(null, true);
+    return callback(null, false);
   },
-  credentials: true,
+  credentials: false,
   methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
     'Content-Type',
@@ -68,5 +87,12 @@ app.use('/api/admin', adminRouter);
 
 app.get('/', (_, res) => res.json({ ok: true, name: 'place-to-all-back' }));
 app.get('/health', (_, res) => res.json({ ok: true }));
+
+// Ensure JSON errors (and failed CORS preflight edge cases) still go through cors when possible
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err.status && Number(err.status) >= 400 && Number(err.status) < 600 ? err.status : 500;
+  res.status(status).json({ error: err.message || 'Internal Server Error' });
+});
 
 export default app;
