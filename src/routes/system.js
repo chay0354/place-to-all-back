@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { supabase } from '../db.js';
-import { SYSTEM_FEE_USER_ID, getFeeRate } from '../lib/fee.js';
+import { getFeeRate, resolveAdminFeeRecipientUserId } from '../lib/fee.js';
 
 export const systemRouter = Router();
 
@@ -22,10 +22,11 @@ function requireAdmin(req, res, next) {
 systemRouter.get('/fees', requireAdmin, async (req, res) => {
   try {
     const rate = getFeeRate();
+    const feeUserId = await resolveAdminFeeRecipientUserId();
     const { data: wallets, error } = await supabase
       .from('wallets')
       .select('currency, balance')
-      .eq('user_id', SYSTEM_FEE_USER_ID)
+      .eq('user_id', feeUserId)
       .order('currency');
 
     if (error) throw error;
@@ -37,7 +38,7 @@ systemRouter.get('/fees', requireAdmin, async (req, res) => {
 
     res.json({
       feePercent: rate * 100,
-      feeUserId: SYSTEM_FEE_USER_ID,
+      feeUserId,
       balances,
     });
   } catch (e) {

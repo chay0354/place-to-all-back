@@ -8,8 +8,39 @@
  */
 
 import { supabase } from '../db.js';
+import { findUserIdByEmail } from './auth-users.js';
 
-export const SYSTEM_FEE_USER_ID = process.env.SYSTEM_FEE_USER_ID || '00000000-0000-0000-0000-000000000002';
+/** Synthetic wallet user from migration 005; used only if operator account is missing and env not set. */
+export const LEGACY_SYSTEM_FEE_USER_ID = '00000000-0000-0000-0000-000000000002';
+
+const ADMIN_OPERATOR_EMAIL = (process.env.ADMIN_OPERATOR_EMAIL || 'admin@admin.com').toLowerCase().trim();
+
+/** @deprecated Use resolveAdminFeeRecipientUserId(). Env SYSTEM_FEE_USER_ID still pins recipient when set. */
+export const SYSTEM_FEE_USER_ID = process.env.SYSTEM_FEE_USER_ID?.trim() || LEGACY_SYSTEM_FEE_USER_ID;
+
+let cachedAdminFeeUserId = null;
+
+/**
+ * User id whose app wallets receive platform fees (buy 4%, SYSTEM_FEE_PERCENT ledger fees).
+ * Defaults to auth user for ADMIN_OPERATOR_EMAIL (admin@admin.com). Override with SYSTEM_FEE_USER_ID.
+ */
+export async function resolveAdminFeeRecipientUserId() {
+  const envId = process.env.SYSTEM_FEE_USER_ID?.trim();
+  if (envId && /^[0-9a-f-]{36}$/i.test(envId)) return envId;
+  if (cachedAdminFeeUserId) return cachedAdminFeeUserId;
+
+  const operatorId = await findUserIdByEmail(ADMIN_OPERATOR_EMAIL);
+  if (operatorId) {
+    cachedAdminFeeUserId = operatorId;
+    return operatorId;
+  }
+
+  console.warn(
+    `[fee] No auth user for ${ADMIN_OPERATOR_EMAIL}; crediting legacy fee user ${LEGACY_SYSTEM_FEE_USER_ID}. Create the operator account or set SYSTEM_FEE_USER_ID.`
+  );
+  cachedAdminFeeUserId = LEGACY_SYSTEM_FEE_USER_ID;
+  return LEGACY_SYSTEM_FEE_USER_ID;
+}
 
 const BUY_SYSTEM_FEE_RATE = 0.04;
 const BUY_AGENT_FEE_RATE = 0.04;
@@ -63,10 +94,11 @@ export async function getOrCreateFeeWallet(currency) {
   const code = (currency || '').toUpperCase();
   if (!code) return null;
 
+  const feeUserId = await resolveAdminFeeRecipientUserId();
   const { data: existing } = await supabase
     .from('wallets')
     .select('*')
-    .eq('user_id', SYSTEM_FEE_USER_ID)
+    .eq('user_id', feeUserId)
     .eq('currency', code)
     .maybeSingle();
 
@@ -74,7 +106,7 @@ export async function getOrCreateFeeWallet(currency) {
 
   const { data: created, error } = await supabase
     .from('wallets')
-    .insert({ user_id: SYSTEM_FEE_USER_ID, currency: code, balance: 0 })
+    .insert({ user_id: feeUserId, currency: code, balance: 0 })
     .select()
     .single();
 
@@ -114,16 +146,17 @@ export async function recordFee(currency, feeAmount, opts = {}) {
 export async function getOrCreateSystemFeeWallet(currency) {
   const code = (currency || '').toUpperCase();
   if (!code) return null;
+  const feeUserId = await resolveAdminFeeRecipientUserId();
   const { data: existing } = await supabase
     .from('wallets')
     .select('*')
-    .eq('user_id', SYSTEM_FEE_USER_ID)
+    .eq('user_id', feeUserId)
     .eq('currency', code)
     .maybeSingle();
   if (existing) return existing;
   const { data: created, error } = await supabase
     .from('wallets')
-    .insert({ user_id: SYSTEM_FEE_USER_ID, currency: code, balance: 0 })
+    .insert({ user_id: feeUserId, currency: code, balance: 0 })
     .select()
     .single();
   if (error) throw error;
@@ -131,7 +164,7 @@ export async function getOrCreateSystemFeeWallet(currency) {
 }
 
 /**
- * Record the 4% buy system fee (to admin / admin@gmail.com wallet). Always used on buys.
+ * Record the 4% buy system fee to the operator account (ADMIN_OPERATOR_EMAIL, default admin@admin.com).
  */
 export async function recordBuySystemFee(currency, feeAmount, opts = {}) {
   if (!feeAmount || feeAmount <= 0) return;
