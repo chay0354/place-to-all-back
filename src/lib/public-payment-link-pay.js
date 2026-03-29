@@ -1,4 +1,4 @@
-import { supabase } from './db.js';
+import { supabase } from '../db.js';
 import { computeBuySplit, recordBuySystemFee } from './fee.js';
 import { isSupportedCrypto } from './coinbase.js';
 import { getActivePaymentLinkByToken, deactivatePaymentLinkById } from './payment-link.js';
