@@ -8,7 +8,7 @@ import {
   recordSuperAgentCommission,
   recordSuperSuperAgentCommission,
 } from '../lib/affiliate.js';
-import { assertValidPaymentLinkForAgent } from '../lib/payment-link.js';
+import { assertValidPaymentLinkForAgent, deactivatePaymentLinkById } from '../lib/payment-link.js';
 
 const SYSTEM_USER_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -143,6 +143,10 @@ export async function fulfillBuyFromFiat(payerUserId, currencyCode, fiatAmount, 
     await recordSuperSuperAgentCommission(payerUserId, code, amountNum, walletId);
   }
 
+  if (metadata.payment_link_id) {
+    await deactivatePaymentLinkById(metadata.payment_link_id);
+  }
+
   return { transaction: tx, newBalance };
 }
 
@@ -249,6 +253,10 @@ buySellRouter.post('/buy', async (req, res) => {
         await recordSuperSuperAgentCommission(payerUserId, code, amountNum, walletId);
       }
 
+      if (paymentLinkMeta.payment_link_id) {
+        await deactivatePaymentLinkById(paymentLinkMeta.payment_link_id);
+      }
+
       console.log('[instant-test] balance before', { creditUserId, payerUserId, currency: code, balance: balanceBefore });
       console.log('[instant-test] transaction', { id: tx?.id, wallet_id: walletId, amount: userNet, type: 'buy', currency: code });
       console.log('[instant-test] balance after', { creditUserId, currency: code, balance: newBalance });
@@ -348,6 +356,10 @@ buySellRouter.post('/buy', async (req, res) => {
     }
     if (superSuperAgentFee > 0) {
       await recordSuperSuperAgentCommission(payerUserId, code, amountNum, walletId);
+    }
+
+    if (paymentLinkMeta.payment_link_id) {
+      await deactivatePaymentLinkById(paymentLinkMeta.payment_link_id);
     }
 
     res.status(201).json({ success: true, transaction: tx, new_balance: newBalance });

@@ -37,3 +37,9 @@ export async function assertValidPaymentLinkForBeneficiary(token, beneficiaryUse
 export async function assertValidPaymentLinkForAgent(token, agentUserId) {
   return assertValidPaymentLinkForBeneficiary(token, agentUserId);
 }
+
+export async function deactivatePaymentLinkById(linkId) {
+  if (!linkId) return;
+  const { error } = await supabase.from('payment_links').update({ active: false }).eq('id', linkId);
+  if (error) throw error;
+}

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabase } from '../db.js';
 import { generatePaymentLinkToken, getActivePaymentLinkByToken } from '../lib/payment-link.js';
+import { simulatePublicPaymentLinkPay } from '../lib/public-payment-link-pay.js';
 
 export const paymentLinksRouter = Router();
 
@@ -28,6 +29,8 @@ paymentLinksRouter.post('/', async (req, res) => {
     if (amountNum == null || Number.isNaN(amountNum) || amountNum <= 0) {
       return res.status(400).json({ error: 'Amount is required and must be greater than 0' });
     }
+
+    await supabase.from('payment_links').update({ active: false }).eq('agent_user_id', userId).eq('active', true);
 
     const { data: row, error } = await supabase
       .from('payment_links')
@@ -60,10 +63,21 @@ paymentLinksRouter.get('/', async (req, res) => {
       .from('payment_links')
       .select('id, token, currency, amount, title, active, created_at')
       .eq('agent_user_id', userId)
+      .eq('active', true)
       .order('created_at', { ascending: false });
 
     if (error) throw error;
     res.json(data || []);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+/** POST /api/payment-links/public/:token/simulate-pay — no auth; demo pay + deactivate link */
+paymentLinksRouter.post('/public/:token/simulate-pay', async (req, res) => {
+  try {
+    const result = await simulatePublicPaymentLinkPay(req.params.token, req.body || {});
+    res.status(201).json(result);
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
