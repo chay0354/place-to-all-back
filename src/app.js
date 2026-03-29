@@ -15,7 +15,40 @@ import { adminRouter } from './routes/admin.js';
 
 const app = express();
 
-app.use(cors({ origin: true, credentials: true }));
+const corsOptions = {
+  origin(origin, callback) {
+    callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-User-Id',
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+    'Access-Control-Request-Method',
+    'Access-Control-Request-Headers',
+  ],
+  exposedHeaders: [],
+  maxAge: 86400,
+  optionsSuccessStatus: 204,
+};
+
+app.use((req, res, next) => {
+  let u = req.url || '';
+  if (u.startsWith('/') && u.includes('//')) {
+    const q = u.indexOf('?');
+    const pathPart = q >= 0 ? u.slice(0, q) : u;
+    const normalized = pathPart.replace(/\/+/g, '/');
+    req.url = q >= 0 ? normalized + u.slice(q) : normalized;
+  }
+  next();
+});
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 // Rapyd webhook needs raw body for signature verification; register before json parser
 app.post('/api/rapyd/webhook', express.raw({ type: 'application/json' }), rapydWebhookHandler);
 app.use(express.json());
