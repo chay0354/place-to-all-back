@@ -1,8 +1,11 @@
 import { supabase } from '../db.js';
 
-const AFFILIATE_RATE = 0.02; // direct agent (or super / super-super) on referred regular's buy
-const SUPER_UPLINE_RATE = 0.04; // first upline tier (super_agent or super_super_agent as recruiter)
-const SUPER_SUPER_UPLINE_RATE = 0.04; // second tier: super_super_agent above first-tier recipient
+/** Direct recruiter share (regular buyer’s immediate referrer). */
+const AFFILIATE_DIRECT_RATE = 0.04;
+/** First super_agent above the direct recruiter (not the same wallet as direct). */
+const SUPER_AGENT_TIER_RATE = 0.04;
+/** First super_super_agent further up the chain. */
+const SUPER_SUPER_TIER_RATE = 0.04;
 
 function isSuperUplineRole(role) {
   return role === 'super_agent' || role === 'super_super_agent';
@@ -12,41 +15,85 @@ function isDirectAffiliateReferrerRole(role) {
   return role === 'agent' || isSuperUplineRole(role);
 }
 
+async function getProfile(id) {
+  if (!id) return null;
+  const { data } = await supabase.from('profiles').select('id, role, referred_by_id').eq('id', id).maybeSingle();
+  return data || null;
+}
+
 /**
- * First upline commission recipient: super_agent or super_super_agent who recruited the selling agent,
- * or (for a regular buyer) that agent's super recruiter.
+ * Regular buyer: immediate referrer (agent / super_agent / super_super_agent) for the 4% “direct” tier.
  */
-export async function resolveSuperAgentUplineForBuyer(userId) {
-  const { data: p } = await supabase.from('profiles').select('role, referred_by_id').eq('id', userId).maybeSingle();
+export async function resolveDirectAffiliateId(userId) {
+  const p = await getProfile(userId);
+  if (p?.role !== 'regular' || !p.referred_by_id) return null;
+  const ref = await getProfile(p.referred_by_id);
+  if (!ref || !isDirectAffiliateReferrerRole(ref.role)) return null;
+  return ref.id;
+}
+
+/**
+ * 4% “super agent” tier: first profile with role super_agent walking up from (above) the direct referrer.
+ * Agent buyer: pays buyer’s referred_by only if that parent is super_agent.
+ */
+export async function resolveSuperAgentTierId(userId) {
+  const p = await getProfile(userId);
   if (!p) return null;
+
+  if (p.role === 'regular') {
+    const directId = await resolveDirectAffiliateId(userId);
+    if (!directId) return null;
+    const direct = await getProfile(directId);
+    let cur = direct?.referred_by_id;
+    while (cur) {
+      const node = await getProfile(cur);
+      if (!node) return null;
+      if (node.role === 'super_agent') return node.id;
+      cur = node.referred_by_id;
+    }
+    return null;
+  }
+
   if (p.role === 'agent' && p.referred_by_id) {
-    const { data: up } = await supabase.from('profiles').select('role').eq('id', p.referred_by_id).maybeSingle();
-    if (isSuperUplineRole(up?.role)) return p.referred_by_id;
+    const up = await getProfile(p.referred_by_id);
+    if (up?.role === 'super_agent') return p.referred_by_id;
   }
-  if (p.role === 'regular' && p.referred_by_id) {
-    const { data: ref } = await supabase.from('profiles').select('role, referred_by_id').eq('id', p.referred_by_id).maybeSingle();
-    if (ref?.role === 'super_agent') {
-      return p.referred_by_id;
-    }
-    if (ref?.role === 'agent' && ref.referred_by_id) {
-      const { data: up } = await supabase.from('profiles').select('role').eq('id', ref.referred_by_id).maybeSingle();
-      if (isSuperUplineRole(up?.role)) return ref.referred_by_id;
-    }
-  }
+
   return null;
 }
 
 /**
- * Second upline: super_super_agent who recruited the first-tier recipient (referred_by_id chain).
+ * 4% “super super agent” tier: first super_super_agent walking up from above the direct referrer (regular),
+ * or up from the agent buyer’s referred_by chain.
  */
-export async function resolveSuperSuperAgentUplineForBuyer(userId) {
-  const firstId = await resolveSuperAgentUplineForBuyer(userId);
-  if (!firstId) return null;
-  const { data: first } = await supabase.from('profiles').select('referred_by_id').eq('id', firstId).maybeSingle();
-  const parentId = first?.referred_by_id;
-  if (!parentId) return null;
-  const { data: parent } = await supabase.from('profiles').select('role').eq('id', parentId).maybeSingle();
-  if (parent?.role === 'super_super_agent') return parentId;
+export async function resolveSuperSuperAgentTierId(userId) {
+  const p = await getProfile(userId);
+  if (!p) return null;
+
+  if (p.role === 'regular') {
+    const directId = await resolveDirectAffiliateId(userId);
+    if (!directId) return null;
+    const direct = await getProfile(directId);
+    let cur = direct?.referred_by_id;
+    while (cur) {
+      const node = await getProfile(cur);
+      if (!node) return null;
+      if (node.role === 'super_super_agent') return node.id;
+      cur = node.referred_by_id;
+    }
+    return null;
+  }
+
+  if (p.role === 'agent' && p.referred_by_id) {
+    let cur = p.referred_by_id;
+    while (cur) {
+      const node = await getProfile(cur);
+      if (!node) return null;
+      if (node.role === 'super_super_agent') return node.id;
+      cur = node.referred_by_id;
+    }
+  }
+
   return null;
 }
 
@@ -60,8 +107,9 @@ export async function getBuyCommissionFlags(payerUserId) {
     const { data: ref } = await supabase.from('profiles').select('role').eq('id', payer.referred_by_id).maybeSingle();
     if (ref && isDirectAffiliateReferrerRole(ref.role)) hasAffiliate = true;
   }
-  const superId = await resolveSuperAgentUplineForBuyer(payerUserId);
-  const superSuperId = await resolveSuperSuperAgentUplineForBuyer(payerUserId);
+
+  const superId = await resolveSuperAgentTierId(payerUserId);
+  const superSuperId = await resolveSuperSuperAgentTierId(payerUserId);
   return {
     hasAffiliate,
     hasSuperUpline: Boolean(superId),
@@ -70,7 +118,7 @@ export async function getBuyCommissionFlags(payerUserId) {
 }
 
 /**
- * 2% to direct referrer when buyer is regular and referred by agent, super_agent, or super_super_agent.
+ * 4% to direct referrer when buyer is regular (agent / super_agent / super_super_agent).
  */
 export async function recordAgentCommission(buyerUserId, currency, buyAmount, toWalletId) {
   if (!buyAmount || buyAmount <= 0) return;
@@ -82,7 +130,7 @@ export async function recordAgentCommission(buyerUserId, currency, buyAmount, to
   if (!ref || !isDirectAffiliateReferrerRole(ref.role)) return;
 
   const agentId = payer.referred_by_id;
-  const commissionAmount = buyAmount * AFFILIATE_RATE;
+  const commissionAmount = buyAmount * AFFILIATE_DIRECT_RATE;
   if (commissionAmount <= 0) return;
 
   const code = (currency || '').toUpperCase();
@@ -123,19 +171,17 @@ export async function recordAgentCommission(buyerUserId, currency, buyAmount, to
     to_wallet_id: agentWalletId,
     amount: commissionAmount,
     type: 'affiliate',
-    metadata: { currency: code, buyer_user_id: buyerUserId, to_wallet_id: toWalletId, rate: AFFILIATE_RATE, kind: 'direct' },
+    metadata: { currency: code, buyer_user_id: buyerUserId, to_wallet_id: toWalletId, rate: AFFILIATE_DIRECT_RATE, kind: 'direct' },
   });
 }
 
-/**
- * 4% first upline tier (super_agent or super_super_agent as network head for the buyer).
- */
+/** 4% to first super_agent tier (see resolveSuperAgentTierId). */
 export async function recordSuperAgentCommission(buyerUserId, currency, buyAmount, toWalletId) {
   if (!buyAmount || buyAmount <= 0) return;
-  const superAgentId = await resolveSuperAgentUplineForBuyer(buyerUserId);
+  const superAgentId = await resolveSuperAgentTierId(buyerUserId);
   if (!superAgentId) return;
 
-  const commissionAmount = buyAmount * SUPER_UPLINE_RATE;
+  const commissionAmount = buyAmount * SUPER_AGENT_TIER_RATE;
   if (commissionAmount <= 0) return;
 
   const code = (currency || '').toUpperCase();
@@ -177,21 +223,19 @@ export async function recordSuperAgentCommission(buyerUserId, currency, buyAmoun
       currency: code,
       buyer_user_id: buyerUserId,
       to_wallet_id: toWalletId,
-      rate: SUPER_UPLINE_RATE,
+      rate: SUPER_AGENT_TIER_RATE,
       kind: 'super_upline',
     },
   });
 }
 
-/**
- * 4% to super_super_agent above the first upline tier (when applicable).
- */
+/** 4% to first super_super_agent tier (see resolveSuperSuperAgentTierId). */
 export async function recordSuperSuperAgentCommission(buyerUserId, currency, buyAmount, toWalletId) {
   if (!buyAmount || buyAmount <= 0) return;
-  const id = await resolveSuperSuperAgentUplineForBuyer(buyerUserId);
+  const id = await resolveSuperSuperAgentTierId(buyerUserId);
   if (!id) return;
 
-  const commissionAmount = buyAmount * SUPER_SUPER_UPLINE_RATE;
+  const commissionAmount = buyAmount * SUPER_SUPER_TIER_RATE;
   if (commissionAmount <= 0) return;
 
   const code = (currency || '').toUpperCase();
@@ -233,7 +277,7 @@ export async function recordSuperSuperAgentCommission(buyerUserId, currency, buy
       currency: code,
       buyer_user_id: buyerUserId,
       to_wallet_id: toWalletId,
-      rate: SUPER_SUPER_UPLINE_RATE,
+      rate: SUPER_SUPER_TIER_RATE,
       kind: 'super_super_upline',
     },
   });

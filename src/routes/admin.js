@@ -22,6 +22,24 @@ async function requireAppAdmin(req, res, next) {
 
 adminRouter.use(requireAppAdmin);
 
+/** user_id -> [{ currency, balance }, ...] from app ledger */
+async function getWalletSummariesByUserIds(userIds) {
+  const ids = [...new Set((userIds || []).filter(Boolean))];
+  if (ids.length === 0) return {};
+  const { data, error } = await supabase.from('wallets').select('user_id, currency, balance').in('user_id', ids);
+  if (error) throw error;
+  const map = Object.fromEntries(ids.map((id) => [id, []]));
+  for (const w of data || []) {
+    const uid = w.user_id;
+    if (!map[uid]) map[uid] = [];
+    map[uid].push({ currency: (w.currency || '').toUpperCase(), balance: Number(w.balance) || 0 });
+  }
+  for (const uid of Object.keys(map)) {
+    map[uid].sort((a, b) => String(a.currency).localeCompare(String(b.currency)));
+  }
+  return map;
+}
+
 /** Profiles where referred_by_id is set — count per referrer id */
 async function getInvitedCountsByReferrerIds(referrerIds) {
   const ids = [...new Set((referrerIds || []).filter(Boolean))];
@@ -50,8 +68,13 @@ adminRouter.get('/agents', async (req, res) => {
 
     const list = rows || [];
     const countMap = await getInvitedCountsByReferrerIds(list.map((r) => r.id));
+    const walletMap = await getWalletSummariesByUserIds(list.map((r) => r.id));
     const withEmail = await enrichProfilesWithEmail(list);
-    const enriched = withEmail.map((row) => ({ ...row, invitedCount: countMap[row.id] ?? 0 }));
+    const enriched = withEmail.map((row) => ({
+      ...row,
+      invitedCount: countMap[row.id] ?? 0,
+      wallets: walletMap[row.id] ?? [],
+    }));
 
     res.json(enriched);
   } catch (e) {
@@ -83,7 +106,10 @@ adminRouter.get('/regular-users', async (req, res) => {
       .limit(1000);
 
     if (error) throw error;
-    const enriched = await enrichProfilesWithEmail(rows || []);
+    const list = rows || [];
+    const walletMap = await getWalletSummariesByUserIds(list.map((r) => r.id));
+    const withEmail = await enrichProfilesWithEmail(list);
+    const enriched = withEmail.map((row) => ({ ...row, wallets: walletMap[row.id] ?? [] }));
     res.json(enriched);
   } catch (e) {
     res.status(500).json({ error: e.message });

@@ -1,10 +1,10 @@
 /**
  * Buy splits (all deducted from gross crypto — payer bears the cost):
  * - 4% admin (system) always
- * - 2% direct affiliate when buyer is a regular user referred by an agent or super-tier recruiter
- * - 4% first super upline when buyer is under that network (super_agent or super_super_agent head)
- * - 4% super-super upline when a super_super_agent sits above the first upline recipient
- * Remainder credits the recipient wallet.
+ * - 4% direct affiliate when buyer is regular and referred by agent or super-tier recruiter
+ * - 4% to first super_agent above that direct referrer (separate wallet; not double-paying direct)
+ * - 4% to first super_super_agent further up the chain
+ * Max 16% fees + user net when full chain exists. Remainder credits the recipient wallet.
  */
 
 import { supabase } from '../db.js';
@@ -12,7 +12,7 @@ import { supabase } from '../db.js';
 export const SYSTEM_FEE_USER_ID = process.env.SYSTEM_FEE_USER_ID || '00000000-0000-0000-0000-000000000002';
 
 const BUY_SYSTEM_FEE_RATE = 0.04;
-const BUY_AGENT_FEE_RATE = 0.02;
+const BUY_AGENT_FEE_RATE = 0.04;
 const BUY_SUPER_UPLINE_RATE = 0.04;
 const BUY_SUPER_SUPER_UPLINE_RATE = 0.04;
 
