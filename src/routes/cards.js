@@ -157,6 +157,7 @@ cardsRouter.post('/apple-pay/add', async (req, res) => {
       applePay: {
         status: 'provisioned',
         message: 'Card is now added to Apple Pay in system state.',
+        wallet_deeplink_url: 'shoebox://',
       },
     });
   } catch (e) {
