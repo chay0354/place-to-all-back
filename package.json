@@ -9,6 +9,8 @@
     "start": "node src/index.js",
     "test:e2e": "node scripts/test-flow.js",
     "test:user-wallet": "node scripts/test-user-wallet.js",
+    "test:user-card": "node scripts/test-user-card.js",
+    "test:user-card-applepay": "node scripts/test-user-card-applepay.js",
     "test:user-buy": "node scripts/test-user-buy.js",
     "test:payments-flow": "node scripts/test-payments-flow.js",
     "fund:sandbox": "node scripts/fund-sandbox-wallets.js",

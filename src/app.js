@@ -12,6 +12,7 @@ import { paymentLinksRouter } from './routes/payment-links.js';
 import { systemRouter } from './routes/system.js';
 import { rapydRouter, rapydWebhookHandler } from './routes/rapyd.js';
 import { adminRouter } from './routes/admin.js';
+import { cardsRouter } from './routes/cards.js';
 
 const app = express();
 
@@ -84,6 +85,7 @@ app.use('/api/payment-links', paymentLinksRouter);
 app.use('/api/system', systemRouter);
 app.use('/api/rapyd', rapydRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/cards', cardsRouter);
 
 app.get('/', (_, res) => res.json({ ok: true, name: 'place-to-all-back' }));
 app.get('/health', (_, res) => res.json({ ok: true }));
