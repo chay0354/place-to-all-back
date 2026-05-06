@@ -4,6 +4,7 @@ import { createBuyQuote, getSpotPriceUsd, isSupportedCrypto } from '../lib/coinb
 import { applyFee, recordFee, computeBuySplit, recordBuySystemFee } from '../lib/fee.js';
 import {
   getBuyCommissionFlags,
+  getTierRatesForBuyer,
   recordAgentCommission,
   recordSuperAgentCommission,
   recordSuperSuperAgentCommission,
@@ -63,7 +64,12 @@ export async function fulfillBuyFromFiat(payerUserId, currencyCode, fiatAmount, 
   if (!amountNum || amountNum <= 0) throw new Error('Coinbase quote did not return a valid crypto amount');
 
   const flags = await getBuyCommissionFlags(payerUserId);
-  const { userNet, systemFee, agentFee, superAgentFee, superSuperAgentFee } = computeBuySplit(amountNum, flags);
+  const tierRates = await getTierRatesForBuyer(payerUserId);
+  const { userNet, systemFee, agentFee, superAgentFee, superSuperAgentFee } = computeBuySplit(amountNum, flags, {
+    direct: tierRates.direct,
+    superUpline: tierRates.superUpline,
+    superSuperUpline: tierRates.superSuperUpline,
+  });
 
   const treasury = await getOrCreateTreasuryWallet(code);
 
@@ -134,13 +140,13 @@ export async function fulfillBuyFromFiat(payerUserId, currencyCode, fiatAmount, 
 
   await recordBuySystemFee(code, systemFee, { fromWalletId: treasury.id, metadata: { user_id: payerUserId, ...metadata } });
   if (agentFee > 0) {
-    await recordAgentCommission(payerUserId, code, amountNum, walletId);
+    await recordAgentCommission(payerUserId, code, amountNum, walletId, tierRates.direct);
   }
   if (superAgentFee > 0) {
-    await recordSuperAgentCommission(payerUserId, code, amountNum, walletId);
+    await recordSuperAgentCommission(payerUserId, code, amountNum, walletId, tierRates.superUpline);
   }
   if (superSuperAgentFee > 0) {
-    await recordSuperSuperAgentCommission(payerUserId, code, amountNum, walletId);
+    await recordSuperSuperAgentCommission(payerUserId, code, amountNum, walletId, tierRates.superSuperUpline);
   }
 
   if (metadata.payment_link_id) {
@@ -196,7 +202,12 @@ buySellRouter.post('/buy', async (req, res) => {
       }
 
       const flags = await getBuyCommissionFlags(payerUserId);
-      const { userNet, systemFee, agentFee, superAgentFee, superSuperAgentFee } = computeBuySplit(amountNum, flags);
+      const tierRates = await getTierRatesForBuyer(payerUserId);
+      const { userNet, systemFee, agentFee, superAgentFee, superSuperAgentFee } = computeBuySplit(amountNum, flags, {
+        direct: tierRates.direct,
+        superUpline: tierRates.superUpline,
+        superSuperUpline: tierRates.superSuperUpline,
+      });
 
       const { data: userWallet, error: userErr } = await supabase
         .from('wallets')
@@ -244,13 +255,13 @@ buySellRouter.post('/buy', async (req, res) => {
 
       await recordBuySystemFee(code, systemFee, { metadata: { user_id: payerUserId, instant_test: true } });
       if (agentFee > 0) {
-        await recordAgentCommission(payerUserId, code, amountNum, walletId);
+        await recordAgentCommission(payerUserId, code, amountNum, walletId, tierRates.direct);
       }
       if (superAgentFee > 0) {
-        await recordSuperAgentCommission(payerUserId, code, amountNum, walletId);
+        await recordSuperAgentCommission(payerUserId, code, amountNum, walletId, tierRates.superUpline);
       }
       if (superSuperAgentFee > 0) {
-        await recordSuperSuperAgentCommission(payerUserId, code, amountNum, walletId);
+        await recordSuperSuperAgentCommission(payerUserId, code, amountNum, walletId, tierRates.superSuperUpline);
       }
 
       if (paymentLinkMeta.payment_link_id) {
@@ -280,7 +291,12 @@ buySellRouter.post('/buy', async (req, res) => {
     const amountNum = amountVal;
 
     const flags = await getBuyCommissionFlags(payerUserId);
-    const { userNet, systemFee, agentFee, superAgentFee, superSuperAgentFee } = computeBuySplit(amountNum, flags);
+    const tierRates = await getTierRatesForBuyer(payerUserId);
+    const { userNet, systemFee, agentFee, superAgentFee, superSuperAgentFee } = computeBuySplit(amountNum, flags, {
+      direct: tierRates.direct,
+      superUpline: tierRates.superUpline,
+      superSuperUpline: tierRates.superSuperUpline,
+    });
 
     const treasury = await getOrCreateTreasuryWallet(code);
 
@@ -349,13 +365,13 @@ buySellRouter.post('/buy', async (req, res) => {
 
     await recordBuySystemFee(code, systemFee, { fromWalletId: treasury.id, metadata: { source: 'buy', user_id: payerUserId } });
     if (agentFee > 0) {
-      await recordAgentCommission(payerUserId, code, amountNum, walletId);
+      await recordAgentCommission(payerUserId, code, amountNum, walletId, tierRates.direct);
     }
     if (superAgentFee > 0) {
-      await recordSuperAgentCommission(payerUserId, code, amountNum, walletId);
+      await recordSuperAgentCommission(payerUserId, code, amountNum, walletId, tierRates.superUpline);
     }
     if (superSuperAgentFee > 0) {
-      await recordSuperSuperAgentCommission(payerUserId, code, amountNum, walletId);
+      await recordSuperSuperAgentCommission(payerUserId, code, amountNum, walletId, tierRates.superSuperUpline);
     }
 
     if (paymentLinkMeta.payment_link_id) {

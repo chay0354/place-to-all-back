@@ -1,11 +1,12 @@
 import { supabase } from '../db.js';
 
-/** Direct recruiter share (regular buyer’s immediate referrer). */
+/** Default tier share when profiles.affiliate_take_rate is null. */
 const AFFILIATE_DIRECT_RATE = 0.04;
-/** First super_agent above the direct recruiter (not the same wallet as direct). */
 const SUPER_AGENT_TIER_RATE = 0.04;
-/** First super_super_agent further up the chain. */
 const SUPER_SUPER_TIER_RATE = 0.04;
+
+/** Max configurable take via affiliate_take_rate (matches fee.js MAX tier clamp). */
+const MAX_COMMISSION_TIER_RATE = 0.06;
 
 function isSuperUplineRole(role) {
   return role === 'super_agent' || role === 'super_super_agent';
@@ -19,6 +20,17 @@ async function getProfile(id) {
   if (!id) return null;
   const { data } = await supabase.from('profiles').select('id, role, referred_by_id').eq('id', id).maybeSingle();
   return data || null;
+}
+
+/** Effective decimal rate for this user’s affiliate tier (default 4%, max 6%). */
+async function getAffiliateTakeRateForRecipient(userId) {
+  if (!userId) return AFFILIATE_DIRECT_RATE;
+  const { data } = await supabase.from('profiles').select('affiliate_take_rate').eq('id', userId).maybeSingle();
+  if (data?.affiliate_take_rate != null && data.affiliate_take_rate !== '') {
+    const r = Number(data.affiliate_take_rate);
+    if (!Number.isNaN(r)) return Math.min(MAX_COMMISSION_TIER_RATE, Math.max(0, r));
+  }
+  return AFFILIATE_DIRECT_RATE;
 }
 
 /**
@@ -118,9 +130,34 @@ export async function getBuyCommissionFlags(payerUserId) {
 }
 
 /**
- * 4% to direct referrer when buyer is regular (agent / super_agent / super_super_agent).
+ * Effective tier rates (decimals) for a buyer — each recipient’s single `affiliate_take_rate` (0–6%, default 4%).
  */
-export async function recordAgentCommission(buyerUserId, currency, buyAmount, toWalletId) {
+export async function getTierRatesForBuyer(buyerUserId) {
+  let direct = AFFILIATE_DIRECT_RATE;
+  const payer = await getProfile(buyerUserId);
+  if (payer?.role === 'regular' && payer.referred_by_id) {
+    const { data: ref } = await supabase.from('profiles').select('role').eq('id', payer.referred_by_id).maybeSingle();
+    if (ref && isDirectAffiliateReferrerRole(ref.role)) {
+      direct = await getAffiliateTakeRateForRecipient(payer.referred_by_id);
+    }
+  }
+
+  let superUpline = SUPER_AGENT_TIER_RATE;
+  const superId = await resolveSuperAgentTierId(buyerUserId);
+  if (superId) superUpline = await getAffiliateTakeRateForRecipient(superId);
+
+  let superSuperUpline = SUPER_SUPER_TIER_RATE;
+  const ssId = await resolveSuperSuperAgentTierId(buyerUserId);
+  if (ssId) superSuperUpline = await getAffiliateTakeRateForRecipient(ssId);
+
+  return { direct, superUpline, superSuperUpline };
+}
+
+/**
+ * Direct referrer commission when buyer is regular (agent / super_agent / super_super_agent).
+ * @param {number} [directRate] decimal e.g. 0.04
+ */
+export async function recordAgentCommission(buyerUserId, currency, buyAmount, toWalletId, directRate = AFFILIATE_DIRECT_RATE) {
   if (!buyAmount || buyAmount <= 0) return;
 
   const { data: payer } = await supabase.from('profiles').select('role, referred_by_id').eq('id', buyerUserId).maybeSingle();
@@ -130,7 +167,8 @@ export async function recordAgentCommission(buyerUserId, currency, buyAmount, to
   if (!ref || !isDirectAffiliateReferrerRole(ref.role)) return;
 
   const agentId = payer.referred_by_id;
-  const commissionAmount = buyAmount * AFFILIATE_DIRECT_RATE;
+  const rate = Math.min(MAX_COMMISSION_TIER_RATE, Math.max(0, Number(directRate) || AFFILIATE_DIRECT_RATE));
+  const commissionAmount = buyAmount * rate;
   if (commissionAmount <= 0) return;
 
   const code = (currency || '').toUpperCase();
@@ -171,17 +209,18 @@ export async function recordAgentCommission(buyerUserId, currency, buyAmount, to
     to_wallet_id: agentWalletId,
     amount: commissionAmount,
     type: 'affiliate',
-    metadata: { currency: code, buyer_user_id: buyerUserId, to_wallet_id: toWalletId, rate: AFFILIATE_DIRECT_RATE, kind: 'direct' },
+    metadata: { currency: code, buyer_user_id: buyerUserId, to_wallet_id: toWalletId, rate, kind: 'direct' },
   });
 }
 
-/** 4% to first super_agent tier (see resolveSuperAgentTierId). */
-export async function recordSuperAgentCommission(buyerUserId, currency, buyAmount, toWalletId) {
+/** First super_agent tier (see resolveSuperAgentTierId). */
+export async function recordSuperAgentCommission(buyerUserId, currency, buyAmount, toWalletId, tierRate = SUPER_AGENT_TIER_RATE) {
   if (!buyAmount || buyAmount <= 0) return;
   const superAgentId = await resolveSuperAgentTierId(buyerUserId);
   if (!superAgentId) return;
 
-  const commissionAmount = buyAmount * SUPER_AGENT_TIER_RATE;
+  const rate = Math.min(MAX_COMMISSION_TIER_RATE, Math.max(0, Number(tierRate) || SUPER_AGENT_TIER_RATE));
+  const commissionAmount = buyAmount * rate;
   if (commissionAmount <= 0) return;
 
   const code = (currency || '').toUpperCase();
@@ -223,19 +262,20 @@ export async function recordSuperAgentCommission(buyerUserId, currency, buyAmoun
       currency: code,
       buyer_user_id: buyerUserId,
       to_wallet_id: toWalletId,
-      rate: SUPER_AGENT_TIER_RATE,
+      rate,
       kind: 'super_upline',
     },
   });
 }
 
-/** 4% to first super_super_agent tier (see resolveSuperSuperAgentTierId). */
-export async function recordSuperSuperAgentCommission(buyerUserId, currency, buyAmount, toWalletId) {
+/** First super_super_agent tier (see resolveSuperSuperAgentTierId). */
+export async function recordSuperSuperAgentCommission(buyerUserId, currency, buyAmount, toWalletId, tierRate = SUPER_SUPER_TIER_RATE) {
   if (!buyAmount || buyAmount <= 0) return;
   const id = await resolveSuperSuperAgentTierId(buyerUserId);
   if (!id) return;
 
-  const commissionAmount = buyAmount * SUPER_SUPER_TIER_RATE;
+  const rate = Math.min(MAX_COMMISSION_TIER_RATE, Math.max(0, Number(tierRate) || SUPER_SUPER_TIER_RATE));
+  const commissionAmount = buyAmount * rate;
   if (commissionAmount <= 0) return;
 
   const code = (currency || '').toUpperCase();
@@ -277,7 +317,7 @@ export async function recordSuperSuperAgentCommission(buyerUserId, currency, buy
       currency: code,
       buyer_user_id: buyerUserId,
       to_wallet_id: toWalletId,
-      rate: SUPER_SUPER_TIER_RATE,
+      rate,
       kind: 'super_super_upline',
     },
   });

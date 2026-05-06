@@ -1,10 +1,8 @@
 /**
  * Buy splits (all deducted from gross crypto — payer bears the cost):
  * - 4% admin (system) always
- * - 4% direct affiliate when buyer is regular and referred by agent or super-tier recruiter
- * - 4% to first super_agent above that direct referrer (separate wallet; not double-paying direct)
- * - 4% to first super_super_agent further up the chain
- * Max 16% fees + user net when full chain exists. Remainder credits the recipient wallet.
+ * - Up to 6% each: direct affiliate, super-agent tier, super-super tier (per-recipient `affiliate_take_rate`, default 4% when unset)
+ * Max theoretical affiliate+tier stack depends on chain; remainder credits the recipient wallet.
  */
 
 import { supabase } from '../db.js';
@@ -47,17 +45,30 @@ const BUY_AGENT_FEE_RATE = 0.04;
 const BUY_SUPER_UPLINE_RATE = 0.04;
 const BUY_SUPER_SUPER_UPLINE_RATE = 0.04;
 
+/** Max configurable affiliate tier take per recipient (see profiles.affiliate_take_rate). */
+const MAX_TIER = 0.06;
+
+function clampTierRate(n) {
+  if (n == null || Number.isNaN(n)) return MAX_TIER;
+  return Math.min(MAX_TIER, Math.max(0, Number(n)));
+}
+
 /**
  * @param {number} grossAmount
  * @param {{ hasAffiliate?: boolean, hasSuperUpline?: boolean, hasSuperSuperUpline?: boolean }} flags
+ * @param {{ direct?: number, superUpline?: number, superSuperUpline?: number }} [tierRates] decimals 0–0.06 per active tier
  * @returns {{ userNet: number, systemFee: number, agentFee: number, superAgentFee: number, superSuperAgentFee: number }}
  */
-export function computeBuySplit(grossAmount, flags = {}) {
+export function computeBuySplit(grossAmount, flags = {}, tierRates = {}) {
   const { hasAffiliate = false, hasSuperUpline = false, hasSuperSuperUpline = false } = flags;
+  const d = clampTierRate(tierRates.direct ?? BUY_AGENT_FEE_RATE);
+  const s = clampTierRate(tierRates.superUpline ?? BUY_SUPER_UPLINE_RATE);
+  const ss = clampTierRate(tierRates.superSuperUpline ?? BUY_SUPER_SUPER_UPLINE_RATE);
+
   const systemFee = Math.max(0, grossAmount * BUY_SYSTEM_FEE_RATE);
-  const agentFee = hasAffiliate ? Math.max(0, grossAmount * BUY_AGENT_FEE_RATE) : 0;
-  const superAgentFee = hasSuperUpline ? Math.max(0, grossAmount * BUY_SUPER_UPLINE_RATE) : 0;
-  const superSuperAgentFee = hasSuperSuperUpline ? Math.max(0, grossAmount * BUY_SUPER_SUPER_UPLINE_RATE) : 0;
+  const agentFee = hasAffiliate ? Math.max(0, grossAmount * d) : 0;
+  const superAgentFee = hasSuperUpline ? Math.max(0, grossAmount * s) : 0;
+  const superSuperAgentFee = hasSuperSuperUpline ? Math.max(0, grossAmount * ss) : 0;
   const userNet = Math.max(0, grossAmount - systemFee - agentFee - superAgentFee - superSuperAgentFee);
   return { userNet, systemFee, agentFee, superAgentFee, superSuperAgentFee };
 }
