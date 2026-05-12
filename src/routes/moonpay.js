@@ -4,10 +4,11 @@
 
 import crypto from 'crypto';
 import { Router } from 'express';
-import { getSignedMoonPayUrl, isEvmCurrency } from '../lib/moonpay.js';
+import { getSignedMoonPayUrl, isEvmCurrency, getMoonPayFixedWalletForCurrency } from '../lib/moonpay.js';
 import { applyFee, recordFee } from '../lib/fee.js';
 import { splitAndSendEth } from '../lib/send-eth.js';
 import { supabase } from '../db.js';
+import { getActivePaymentLinkByToken } from '../lib/payment-link.js';
 
 const platformReceivesMoonPay = () =>
   process.env.PLATFORM_RECEIVES_MOONPAY === 'true' || process.env.PLATFORM_RECEIVES_MOONPAY === '1';
@@ -38,8 +39,9 @@ function verifyMoonPaySignature(payload, signatureHeader, secret) {
 }
 
 /**
- * GET /api/moonpay/url?currencyCode=eth&baseCurrencyCode=usd&baseCurrencyAmount=50
- * Returns signed MoonPay widget URL. Crypto is always sent to the wallet associated with your account (we only support ETH, USDT, USDC, etc.).
+ * GET /api/moonpay/url?currencyCode=eth&baseCurrencyCode=usd&baseCurrencyAmount=50&quoteCurrencyAmount=0.01&lockAmount
+ * Returns signed MoonPay URL. Pass quoteCurrencyAmount (crypto from your Amount field) and baseCurrencyAmount (USD);
+ * lockAmount=true (default) maps to MoonPay’s lockAmount so the fiat amount cannot be changed in the widget.
  */
 moonpayRouter.get('/url', async (req, res) => {
   try {
@@ -47,12 +49,7 @@ moonpayRouter.get('/url', async (req, res) => {
     if (!userId) return res.status(401).json({ error: 'Missing X-User-Id' });
 
     const currencyCode = (req.query.currencyCode || req.query.currency || 'eth').toString().toLowerCase();
-
-    if (!isEvmCurrency(currencyCode)) {
-      return res.status(400).json({
-        error: 'Buy with MoonPay only supports currencies that go to your account wallet (e.g. ETH, USDT, USDC). Choose one of these so the crypto is sent to your wallet.',
-      });
-    }
+    const fixedWallet = getMoonPayFixedWalletForCurrency(currencyCode);
 
     const { data: row } = await supabase
       .from('coinbase_wallets')
@@ -61,28 +58,116 @@ moonpayRouter.get('/url', async (req, res) => {
       .maybeSingle();
 
     const userAddress = row?.delivery_address || row?.default_address || row?.wallet_id;
-    if (!userAddress || !String(userAddress).startsWith('0x')) {
-      return res.status(400).json({
-        error: 'No wallet address. Create a wallet first (e.g. visit dashboard or POST /api/coinbase/wallet).',
-      });
+    if (isEvmCurrency(currencyCode) && !fixedWallet) {
+      if (!userAddress || !String(userAddress).startsWith('0x')) {
+        return res.status(400).json({
+          error: 'No wallet address. Create a wallet first (e.g. visit dashboard or POST /api/coinbase/wallet).',
+        });
+      }
     }
 
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     const redirectUrl = `${frontendUrl.replace(/\/+$/, '')}/dashboard?moonpay=success`;
 
     const baseCurrencyAmount = req.query.baseCurrencyAmount != null ? Number(req.query.baseCurrencyAmount) : null;
+    const quoteCurrencyAmount = req.query.quoteCurrencyAmount != null ? Number(req.query.quoteCurrencyAmount) : null;
+    const amountLocked = req.query.lockAmount !== 'false' && req.query.lockAmount !== '0';
+
+    if (!(quoteCurrencyAmount > 0) || !(baseCurrencyAmount > 0)) {
+      return res.status(400).json({
+        error: 'Enter an Amount on the buy page (greater than 0) so MoonPay can use your crypto quantity and USD estimate.',
+      });
+    }
 
     const platformWallet = process.env.PLATFORM_WALLET_ADDRESS;
+    const evmRecipient =
+      isEvmCurrency(currencyCode) && userAddress && String(userAddress).startsWith('0x') ? userAddress : undefined;
     const walletAddress =
-      platformReceivesMoonPay() && platformWallet && String(platformWallet).startsWith('0x') ? platformWallet : userAddress;
+      fixedWallet ||
+      (platformReceivesMoonPay() && platformWallet && String(platformWallet).startsWith('0x') ? platformWallet : undefined) ||
+      evmRecipient;
 
     const url = getSignedMoonPayUrl({
       walletAddress,
       currencyCode: (req.query.currencyCode || req.query.currency || 'eth').toString().toLowerCase(),
       baseCurrencyCode: (req.query.baseCurrencyCode || 'usd').toString().toLowerCase(),
-      ...(baseCurrencyAmount > 0 && { baseCurrencyAmount }),
+      baseCurrencyAmount,
+      quoteCurrencyAmount,
+      lockAmount: amountLocked,
       redirectUrl,
       externalCustomerId: userId,
+    });
+
+    res.json({ url });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /api/moonpay/payment-link-url?token=...&baseCurrencyAmount=50
+ * Public (no auth). Opens MoonPay so the payer can buy crypto sent to the **recipient’s** wallet;
+ * externalCustomerId is the link owner so the webhook credits the correct ledger user.
+ */
+moonpayRouter.get('/payment-link-url', async (req, res) => {
+  try {
+    const linkToken = (req.query.token || '').toString().trim();
+    if (!linkToken) return res.status(400).json({ error: 'Missing payment link token' });
+
+    const link = await getActivePaymentLinkByToken(linkToken);
+    if (!link) return res.status(404).json({ error: 'Payment link not found or already used' });
+
+    const currencyRaw = String(link.currency || 'usdt').toLowerCase();
+    const fixedWallet = getMoonPayFixedWalletForCurrency(currencyRaw);
+
+    const { data: row } = await supabase
+      .from('coinbase_wallets')
+      .select('wallet_id, default_address, delivery_address')
+      .eq('user_id', link.agent_user_id)
+      .maybeSingle();
+
+    const recipientAddress = row?.delivery_address || row?.default_address || row?.wallet_id;
+    if (isEvmCurrency(currencyRaw) && !fixedWallet) {
+      if (!recipientAddress || !String(recipientAddress).startsWith('0x')) {
+        return res.status(400).json({
+          error:
+            'The recipient has no on-chain wallet yet. They need to create a wallet in the app (or set a delivery address) before MoonPay can send EVM assets here.',
+        });
+      }
+    }
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const redirectUrl = `${frontendUrl.replace(/\/+$/, '')}/pay/${encodeURIComponent(linkToken)}?moonpay=return`;
+
+    const baseCurrencyAmount = req.query.baseCurrencyAmount != null ? Number(req.query.baseCurrencyAmount) : null;
+    const quoteCurrencyAmount = req.query.quoteCurrencyAmount != null ? Number(req.query.quoteCurrencyAmount) : null;
+    const amountLocked = req.query.lockAmount !== 'false' && req.query.lockAmount !== '0';
+
+    if (!(quoteCurrencyAmount > 0) || !(baseCurrencyAmount > 0)) {
+      return res.status(400).json({
+        error: 'Enter a valid payment amount so MoonPay can lock the crypto quantity and USD estimate.',
+      });
+    }
+
+    const platformWallet = process.env.PLATFORM_WALLET_ADDRESS;
+    const evmRecipient =
+      isEvmCurrency(currencyRaw) && recipientAddress && String(recipientAddress).startsWith('0x')
+        ? recipientAddress
+        : undefined;
+    const walletAddress =
+      fixedWallet ||
+      (platformReceivesMoonPay() && platformWallet && String(platformWallet).startsWith('0x') ? platformWallet : undefined) ||
+      evmRecipient;
+
+    const url = getSignedMoonPayUrl({
+      walletAddress,
+      currencyCode: currencyRaw,
+      baseCurrencyCode: 'usd',
+      baseCurrencyAmount,
+      quoteCurrencyAmount,
+      lockAmount: amountLocked,
+      redirectUrl,
+      externalCustomerId: link.agent_user_id,
     });
 
     res.json({ url });
