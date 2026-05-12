@@ -9,6 +9,7 @@ import { applyFee, recordFee } from '../lib/fee.js';
 import { splitAndSendEth } from '../lib/send-eth.js';
 import { supabase } from '../db.js';
 import { getActivePaymentLinkByToken } from '../lib/payment-link.js';
+import { getPublicFrontendOrigin } from '../lib/public-frontend-url.js';
 
 const platformReceivesMoonPay = () =>
   process.env.PLATFORM_RECEIVES_MOONPAY === 'true' || process.env.PLATFORM_RECEIVES_MOONPAY === '1';
@@ -66,8 +67,7 @@ moonpayRouter.get('/url', async (req, res) => {
       }
     }
 
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    const redirectUrl = `${frontendUrl.replace(/\/+$/, '')}/dashboard?moonpay=success`;
+    const redirectUrl = `${getPublicFrontendOrigin()}/dashboard?moonpay=success`;
 
     const baseCurrencyAmount = req.query.baseCurrencyAmount != null ? Number(req.query.baseCurrencyAmount) : null;
     const quoteCurrencyAmount = req.query.quoteCurrencyAmount != null ? Number(req.query.quoteCurrencyAmount) : null;
@@ -136,8 +136,7 @@ moonpayRouter.get('/payment-link-url', async (req, res) => {
       }
     }
 
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    const redirectUrl = `${frontendUrl.replace(/\/+$/, '')}/pay/${encodeURIComponent(linkToken)}?moonpay=return`;
+    const redirectUrl = `${getPublicFrontendOrigin()}/pay/${encodeURIComponent(linkToken)}?moonpay=return`;
 
     const baseCurrencyAmount = req.query.baseCurrencyAmount != null ? Number(req.query.baseCurrencyAmount) : null;
     const quoteCurrencyAmount = req.query.quoteCurrencyAmount != null ? Number(req.query.quoteCurrencyAmount) : null;

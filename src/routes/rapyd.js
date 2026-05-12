@@ -5,10 +5,11 @@ import { createCheckout, verifyWebhookSignature, getRapydConfig } from '../lib/r
 import { fulfillBuyFromFiat } from './buy-sell.js';
 import { isSupportedCrypto } from '../lib/coinbase.js';
 import { assertValidPaymentLinkForAgent } from '../lib/payment-link.js';
+import { getPublicFrontendOrigin } from '../lib/public-frontend-url.js';
 
 export const rapydRouter = Router();
 
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+const FRONTEND_ORIGIN = getPublicFrontendOrigin();
 
 /** Webhook handler: expects req.body to be raw Buffer (use express.raw for this route). Export for mounting before express.json(). */
 export async function rapydWebhookHandler(req, res) {
