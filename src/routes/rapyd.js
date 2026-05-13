@@ -9,8 +9,6 @@ import { getPublicFrontendOrigin } from '../lib/public-frontend-url.js';
 
 export const rapydRouter = Router();
 
-const FRONTEND_ORIGIN = getPublicFrontendOrigin();
-
 /** Webhook handler: expects req.body to be raw Buffer (use express.raw for this route). Export for mounting before express.json(). */
 export async function rapydWebhookHandler(req, res) {
   const rawBody = (req.body && Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body || ''));
@@ -119,8 +117,9 @@ rapydRouter.post('/checkout', async (req, res) => {
     }
 
     const checkoutId = crypto.randomUUID();
-    const completeUrl = `${FRONTEND_ORIGIN}/dashboard/buy?rapyd=success&checkout_id=${checkoutId}`;
-    const errorUrl = `${FRONTEND_ORIGIN}/dashboard/buy?rapyd=error`;
+    const frontOrigin = getPublicFrontendOrigin(req);
+    const completeUrl = `${frontOrigin}/dashboard/buy?rapyd=success&checkout_id=${checkoutId}`;
+    const errorUrl = `${frontOrigin}/dashboard/buy?rapyd=error`;
 
     const { id: rapydCheckoutId, redirect_url } = await createCheckout({
       amount: Math.round(fiatNum * 100) / 100,

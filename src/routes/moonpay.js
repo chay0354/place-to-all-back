@@ -67,7 +67,7 @@ moonpayRouter.get('/url', async (req, res) => {
       }
     }
 
-    const redirectUrl = `${getPublicFrontendOrigin()}/dashboard?moonpay=success`;
+    const redirectUrl = `${getPublicFrontendOrigin(req)}/dashboard?moonpay=success`;
 
     const baseCurrencyAmount = req.query.baseCurrencyAmount != null ? Number(req.query.baseCurrencyAmount) : null;
     const quoteCurrencyAmount = req.query.quoteCurrencyAmount != null ? Number(req.query.quoteCurrencyAmount) : null;
@@ -136,7 +136,7 @@ moonpayRouter.get('/payment-link-url', async (req, res) => {
       }
     }
 
-    const redirectUrl = `${getPublicFrontendOrigin()}/pay/${encodeURIComponent(linkToken)}?moonpay=return`;
+    const redirectUrl = `${getPublicFrontendOrigin(req)}/pay/${encodeURIComponent(linkToken)}?moonpay=return`;
 
     const baseCurrencyAmount = req.query.baseCurrencyAmount != null ? Number(req.query.baseCurrencyAmount) : null;
     const quoteCurrencyAmount = req.query.quoteCurrencyAmount != null ? Number(req.query.quoteCurrencyAmount) : null;
