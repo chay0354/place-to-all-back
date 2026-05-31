@@ -100,7 +100,7 @@ profileRouter.get('/', async (req, res) => {
 
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, role, referred_by_id, username, display_name')
+      .select('id, role, referred_by_id, username, display_name, avatar_url, id_document_path, id_document_back_path, id_document_uploaded_at')
       .eq('id', userId)
       .maybeSingle();
 
@@ -109,6 +109,106 @@ profileRouter.get('/', async (req, res) => {
       return res.json({ id: userId, role: 'regular', referred_by_id: null });
     }
     res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** PATCH /api/profile — update profile fields (avatar_url, id_document_path). Requires X-User-Id. */
+profileRouter.patch('/', async (req, res) => {
+  try {
+    const userId = req.headers['x-user-id'];
+    if (!userId) return res.status(401).json({ error: 'Missing X-User-Id' });
+
+    const body = req.body || {};
+    const updates = {};
+    const response = { ok: true };
+
+    if (body.avatar_url !== undefined) {
+      if (body.avatar_url !== null && typeof body.avatar_url !== 'string') {
+        return res.status(400).json({ error: 'avatar_url must be a string or null' });
+      }
+      const avatar_url = body.avatar_url === null ? null : body.avatar_url.trim();
+      if (avatar_url && avatar_url.length > 2048) {
+        return res.status(400).json({ error: 'avatar_url is too long' });
+      }
+      updates.avatar_url = avatar_url;
+      response.avatar_url = avatar_url;
+    }
+
+    if (body.id_document_path !== undefined) {
+      if (body.id_document_path !== null && typeof body.id_document_path !== 'string') {
+        return res.status(400).json({ error: 'id_document_path must be a string or null' });
+      }
+      const id_document_path = body.id_document_path === null ? null : body.id_document_path.trim();
+      if (id_document_path) {
+        const prefix = `${userId}/`;
+        if (!id_document_path.startsWith(prefix)) {
+          return res.status(400).json({ error: 'Invalid id_document_path' });
+        }
+        if (id_document_path.length > 512) {
+          return res.status(400).json({ error: 'id_document_path is too long' });
+        }
+        updates.id_document_path = id_document_path;
+        updates.id_document_uploaded_at = new Date().toISOString();
+      } else {
+        updates.id_document_path = null;
+        updates.id_document_back_path = null;
+        updates.id_document_uploaded_at = null;
+      }
+      response.id_document_path = updates.id_document_path ?? null;
+      response.id_document_uploaded_at = updates.id_document_uploaded_at ?? null;
+      if (updates.id_document_back_path === null) {
+        response.id_document_back_path = null;
+      }
+    }
+
+    if (body.id_document_back_path !== undefined) {
+      if (body.id_document_back_path !== null && typeof body.id_document_back_path !== 'string') {
+        return res.status(400).json({ error: 'id_document_back_path must be a string or null' });
+      }
+      const id_document_back_path =
+        body.id_document_back_path === null ? null : body.id_document_back_path.trim();
+      if (id_document_back_path) {
+        const prefix = `${userId}/`;
+        if (!id_document_back_path.startsWith(prefix)) {
+          return res.status(400).json({ error: 'Invalid id_document_back_path' });
+        }
+        if (id_document_back_path.length > 512) {
+          return res.status(400).json({ error: 'id_document_back_path is too long' });
+        }
+        updates.id_document_back_path = id_document_back_path;
+        if (!updates.id_document_uploaded_at) {
+          updates.id_document_uploaded_at = new Date().toISOString();
+        }
+      } else {
+        updates.id_document_back_path = null;
+      }
+      response.id_document_back_path = updates.id_document_back_path ?? null;
+      if (updates.id_document_uploaded_at) {
+        response.id_document_uploaded_at = updates.id_document_uploaded_at;
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: 'No fields to update' });
+    }
+
+    updates.updated_at = new Date().toISOString();
+    const { data: existing } = await supabase.from('profiles').select('id').eq('id', userId).maybeSingle();
+    if (existing) {
+      const { error: upErr } = await supabase.from('profiles').update(updates).eq('id', userId);
+      if (upErr) throw upErr;
+    } else {
+      const { error: insErr } = await supabase.from('profiles').insert({
+        id: userId,
+        role: 'regular',
+        ...updates,
+      });
+      if (insErr) throw insErr;
+    }
+
+    res.json(response);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
