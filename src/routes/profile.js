@@ -100,7 +100,7 @@ profileRouter.get('/', async (req, res) => {
 
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, role, referred_by_id, username, display_name, avatar_url, id_document_path, id_document_back_path, id_document_uploaded_at')
+      .select('id, role, referred_by_id, username, display_name, avatar_url, id_document_path, id_document_back_path, id_document_uploaded_at, nps_score, nps_submitted_at')
       .eq('id', userId)
       .maybeSingle();
 
@@ -188,6 +188,26 @@ profileRouter.patch('/', async (req, res) => {
       if (updates.id_document_uploaded_at) {
         response.id_document_uploaded_at = updates.id_document_uploaded_at;
       }
+    }
+
+    if (body.nps_score !== undefined) {
+      const n = body.nps_score;
+      if (!Number.isInteger(n) || n < 1 || n > 10) {
+        return res.status(400).json({ error: 'nps_score must be an integer from 1 to 10' });
+      }
+      const { data: npsRow, error: npsErr } = await supabase
+        .from('profiles')
+        .select('nps_score')
+        .eq('id', userId)
+        .maybeSingle();
+      if (npsErr) throw npsErr;
+      if (npsRow?.nps_score != null) {
+        return res.status(409).json({ error: 'Feedback already submitted' });
+      }
+      updates.nps_score = n;
+      updates.nps_submitted_at = new Date().toISOString();
+      response.nps_score = n;
+      response.nps_submitted_at = updates.nps_submitted_at;
     }
 
     if (Object.keys(updates).length === 0) {
