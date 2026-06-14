@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { supabase } from '../db.js';
+import { hashSecurityPin, isValidSecurityPin, verifySecurityPin } from '../lib/security-pin.js';
+import { checkPhoneVerificationCode, isTwilioConfigured, normalizePhoneE164, sendPhoneVerificationCode } from '../lib/twilio.js';
 
 export const profileRouter = Router();
 const AGENT_LIKE_ROLES = new Set(['agent', 'super_agent', 'super_super_agent']);
@@ -100,7 +102,7 @@ profileRouter.get('/', async (req, res) => {
 
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, role, referred_by_id, username, display_name, avatar_url, id_document_path, id_document_back_path, id_document_uploaded_at, nps_score, nps_submitted_at')
+      .select('id, role, referred_by_id, username, display_name, avatar_url, id_document_path, id_document_back_path, id_document_uploaded_at, nps_score, nps_submitted_at, security_pin_set_at')
       .eq('id', userId)
       .maybeSingle();
 
@@ -210,6 +212,44 @@ profileRouter.patch('/', async (req, res) => {
       response.nps_submitted_at = updates.nps_submitted_at;
     }
 
+    if (body.security_pin !== undefined || body.clear_security_pin === true) {
+      const { data: pinRow, error: pinReadErr } = await supabase
+        .from('profiles')
+        .select('security_pin_hash')
+        .eq('id', userId)
+        .maybeSingle();
+      if (pinReadErr) throw pinReadErr;
+      const hasPin = Boolean(pinRow?.security_pin_hash);
+
+      if (body.clear_security_pin === true || body.security_pin === null) {
+        if (hasPin) {
+          if (!body.current_pin) {
+            return res.status(400).json({ error: 'Enter your current PIN to remove it' });
+          }
+          if (!verifySecurityPin(body.current_pin, userId, pinRow.security_pin_hash)) {
+            return res.status(401).json({ error: 'Current PIN is incorrect' });
+          }
+        }
+        updates.security_pin_hash = null;
+        updates.security_pin_set_at = null;
+        response.security_pin_set_at = null;
+      } else if (typeof body.security_pin === 'string') {
+        if (hasPin) {
+          if (!body.current_pin) {
+            return res.status(400).json({ error: 'Enter your current PIN to change it' });
+          }
+          if (!verifySecurityPin(body.current_pin, userId, pinRow.security_pin_hash)) {
+            return res.status(401).json({ error: 'Current PIN is incorrect' });
+          }
+        }
+        updates.security_pin_hash = hashSecurityPin(body.security_pin, userId);
+        updates.security_pin_set_at = new Date().toISOString();
+        response.security_pin_set_at = updates.security_pin_set_at;
+      } else {
+        return res.status(400).json({ error: 'security_pin must be a 6-digit string or null' });
+      }
+    }
+
     if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'No fields to update' });
     }
@@ -229,6 +269,112 @@ profileRouter.patch('/', async (req, res) => {
     }
 
     res.json(response);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** POST /api/profile/verify-pin — check quick PIN before dashboard access. Requires X-User-Id. */
+profileRouter.post('/verify-pin', async (req, res) => {
+  try {
+    const userId = req.headers['x-user-id'];
+    if (!userId) return res.status(401).json({ error: 'Missing X-User-Id' });
+
+    const pin = req.body?.pin;
+    if (!isValidSecurityPin(pin)) {
+      return res.status(400).json({ error: 'PIN must be exactly 6 digits' });
+    }
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('security_pin_hash, security_pin_set_at')
+      .eq('id', userId)
+      .maybeSingle();
+    if (error) throw error;
+
+    if (!data?.security_pin_hash) {
+      return res.json({ ok: true, skipped: true });
+    }
+
+    if (!verifySecurityPin(pin, userId, data.security_pin_hash)) {
+      return res.status(401).json({ error: 'Incorrect PIN' });
+    }
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** POST /api/profile/phone/send — send SMS verification code via Twilio Verify. */
+profileRouter.post('/phone/send', async (req, res) => {
+  try {
+    const userId = req.headers['x-user-id'];
+    if (!userId) return res.status(401).json({ error: 'Missing X-User-Id' });
+    if (!isTwilioConfigured()) {
+      return res.status(503).json({ error: 'SMS verification is not configured' });
+    }
+
+    const phone = normalizePhoneE164(req.body?.phone, req.body?.countryCode || '+1');
+    if (!phone) {
+      return res.status(400).json({ error: 'Enter a valid phone number with country code' });
+    }
+
+    const result = await sendPhoneVerificationCode(phone);
+    res.json({ ok: true, phone: result.to, status: result.status });
+  } catch (e) {
+    const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
+    res.status(status).json({ error: e.message });
+  }
+});
+
+/** POST /api/profile/phone/verify — confirm SMS code and save phone on the auth user. */
+profileRouter.post('/phone/verify', async (req, res) => {
+  try {
+    const userId = req.headers['x-user-id'];
+    if (!userId) return res.status(401).json({ error: 'Missing X-User-Id' });
+    if (!isTwilioConfigured()) {
+      return res.status(503).json({ error: 'SMS verification is not configured' });
+    }
+
+    const phone = normalizePhoneE164(req.body?.phone, req.body?.countryCode || '+1');
+    if (!phone) {
+      return res.status(400).json({ error: 'Enter a valid phone number with country code' });
+    }
+
+    await checkPhoneVerificationCode(phone, req.body?.code);
+
+    const { error: updateErr } = await supabase.auth.admin.updateUserById(userId, {
+      phone,
+      phone_confirm: true,
+    });
+    if (updateErr) {
+      if (updateErr.message?.toLowerCase().includes('already')) {
+        return res.status(409).json({ error: 'This phone number is already linked to another account' });
+      }
+      throw updateErr;
+    }
+
+    res.json({ ok: true, phone });
+  } catch (e) {
+    const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
+    res.status(status).json({ error: e.message });
+  }
+});
+
+/** DELETE /api/profile/phone — remove verified phone from the auth user. */
+profileRouter.delete('/phone', async (req, res) => {
+  try {
+    const userId = req.headers['x-user-id'];
+    if (!userId) return res.status(401).json({ error: 'Missing X-User-Id' });
+
+    const { error: updateErr } = await supabase.auth.admin.updateUserById(userId, {
+      phone: null,
+      phone_confirm: false,
+    });
+    if (updateErr) throw updateErr;
+
+    res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
