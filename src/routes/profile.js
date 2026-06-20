@@ -2,9 +2,31 @@ import { Router } from 'express';
 import { supabase } from '../db.js';
 import { hashSecurityPin, isValidSecurityPin, verifySecurityPin } from '../lib/security-pin.js';
 import { checkPhoneVerificationCode, isTwilioConfigured, normalizePhoneE164, sendPhoneVerificationCode } from '../lib/twilio.js';
+import { countryCodeOrDefault, normalizeCountryCode } from '../lib/country.js';
 
 export const profileRouter = Router();
-const AGENT_LIKE_ROLES = new Set(['agent', 'super_agent', 'super_super_agent']);
+const AGENT_LIKE_ROLES = new Set(['agent', 'super_agent', 'super_super_agent', 'admin']);
+
+const PROFILE_BASE_FIELDS =
+  'id, role, referred_by_id, username, display_name, avatar_url, id_document_path, id_document_back_path, id_document_uploaded_at, nps_score, nps_submitted_at, security_pin_set_at';
+
+function isMissingCountryColumn(error) {
+  const msg = error?.message || '';
+  return /country_code/i.test(msg) && /(column|does not exist|schema cache)/i.test(msg);
+}
+
+/** Read a profile row, tolerating a missing country_code column (migration 020 not yet applied). */
+async function selectProfileRow(userId) {
+  let res = await supabase
+    .from('profiles')
+    .select(`${PROFILE_BASE_FIELDS}, country_code`)
+    .eq('id', userId)
+    .maybeSingle();
+  if (res.error && isMissingCountryColumn(res.error)) {
+    res = await supabase.from('profiles').select(PROFILE_BASE_FIELDS).eq('id', userId).maybeSingle();
+  }
+  return res;
+}
 
 function formatAffiliationFeesError(e) {
   const raw = e?.message ?? String(e);
@@ -15,6 +37,7 @@ function formatAffiliationFeesError(e) {
 }
 
 function roleDownlineFilter(role) {
+  if (role === 'admin') return { kind: 'network', roles: ['agent', 'super_agent', 'super_super_agent', 'regular'] };
   if (role === 'super_super_agent') return { kind: 'agents', roles: ['agent', 'super_agent'] };
   if (role === 'super_agent') return { kind: 'agents', roles: ['agent'] };
   if (role === 'agent') return { kind: 'regulars', roles: ['regular'] };
@@ -100,17 +123,13 @@ profileRouter.get('/', async (req, res) => {
     const userId = req.headers['x-user-id'];
     if (!userId) return res.status(401).json({ error: 'Missing X-User-Id' });
 
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, role, referred_by_id, username, display_name, avatar_url, id_document_path, id_document_back_path, id_document_uploaded_at, nps_score, nps_submitted_at, security_pin_set_at')
-      .eq('id', userId)
-      .maybeSingle();
+    const { data, error } = await selectProfileRow(userId);
 
     if (error) throw error;
     if (!data) {
-      return res.json({ id: userId, role: 'regular', referred_by_id: null });
+      return res.json({ id: userId, role: 'regular', referred_by_id: null, country_code: 'IL' });
     }
-    res.json(data);
+    res.json({ ...data, country_code: data.country_code || 'IL' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -136,6 +155,15 @@ profileRouter.patch('/', async (req, res) => {
       }
       updates.avatar_url = avatar_url;
       response.avatar_url = avatar_url;
+    }
+
+    if (body.country_code !== undefined) {
+      const country_code = normalizeCountryCode(body.country_code);
+      if (!country_code) {
+        return res.status(400).json({ error: 'country_code must be a 2-letter ISO code' });
+      }
+      updates.country_code = country_code;
+      response.country_code = country_code;
     }
 
     if (body.id_document_path !== undefined) {
@@ -257,14 +285,20 @@ profileRouter.patch('/', async (req, res) => {
     updates.updated_at = new Date().toISOString();
     const { data: existing } = await supabase.from('profiles').select('id').eq('id', userId).maybeSingle();
     if (existing) {
-      const { error: upErr } = await supabase.from('profiles').update(updates).eq('id', userId);
+      let { error: upErr } = await supabase.from('profiles').update(updates).eq('id', userId);
+      if (upErr && isMissingCountryColumn(upErr) && 'country_code' in updates) {
+        const { country_code, ...safe } = updates;
+        ({ error: upErr } = await supabase.from('profiles').update(safe).eq('id', userId));
+        delete response.country_code;
+      }
       if (upErr) throw upErr;
     } else {
-      const { error: insErr } = await supabase.from('profiles').insert({
-        id: userId,
-        role: 'regular',
-        ...updates,
-      });
+      let { error: insErr } = await supabase.from('profiles').insert({ id: userId, role: 'regular', ...updates });
+      if (insErr && isMissingCountryColumn(insErr) && 'country_code' in updates) {
+        const { country_code, ...safe } = updates;
+        ({ error: insErr } = await supabase.from('profiles').insert({ id: userId, role: 'regular', ...safe }));
+        delete response.country_code;
+      }
       if (insErr) throw insErr;
     }
 
@@ -404,7 +438,7 @@ profileRouter.get('/downline', async (req, res) => {
     }
 
     let list;
-    if (role === 'super_agent' || role === 'super_super_agent') {
+    if (role === 'super_agent' || role === 'super_super_agent' || role === 'admin') {
       list = await fetchReferralDescendants(userId);
       const kind = 'network';
       const members = await Promise.all(
@@ -472,7 +506,7 @@ profileRouter.get('/affiliation-dashboard', async (req, res) => {
     const filter = roleDownlineFilter(role);
     let members;
     let responseKind = filter.kind;
-    if (role === 'super_agent' || role === 'super_super_agent') {
+    if (role === 'super_agent' || role === 'super_super_agent' || role === 'admin') {
       members = await fetchReferralDescendants(userId);
       responseKind = 'network';
     } else {

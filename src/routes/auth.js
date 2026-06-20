@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { supabase } from '../db.js';
+import { countryCodeOrDefault } from '../lib/country.js';
 
 const authRouter = Router();
 const MAX_AGE_SECONDS = 120; // Only confirm users created in the last 2 minutes
@@ -26,7 +27,7 @@ authRouter.get('/referral-preview', async (req, res) => {
  */
 authRouter.post('/confirm-email', async (req, res) => {
   try {
-    const { userId, role: requestedRole, referredBy } = req.body;
+    const { userId, role: requestedRole, referredBy, countryCode } = req.body;
     if (!userId) return res.status(400).json({ error: 'userId required' });
 
     const { data: user, error: fetchErr } = await supabase.auth.admin.getUserById(userId);
@@ -71,12 +72,29 @@ authRouter.post('/confirm-email', async (req, res) => {
       role = requestedRole === 'agent' ? 'agent' : 'regular';
     }
 
+    const country_code = countryCodeOrDefault(countryCode);
+    const missingCountryColumn = (e) =>
+      /country_code/i.test(e?.message || '') && /(column|does not exist|schema cache)/i.test(e?.message || '');
+
     const { data: existing } = await supabase.from('profiles').select('id').eq('id', userId).maybeSingle();
     const updated_at = new Date().toISOString();
     if (existing) {
-      await supabase.from('profiles').update({ role, referred_by_id, updated_at }).eq('id', userId);
+      let { error: e1 } = await supabase
+        .from('profiles')
+        .update({ role, referred_by_id, country_code, updated_at })
+        .eq('id', userId);
+      if (e1 && missingCountryColumn(e1)) {
+        ({ error: e1 } = await supabase.from('profiles').update({ role, referred_by_id, updated_at }).eq('id', userId));
+      }
+      if (e1) throw e1;
     } else {
-      await supabase.from('profiles').insert({ id: userId, role, referred_by_id, updated_at });
+      let { error: e2 } = await supabase
+        .from('profiles')
+        .insert({ id: userId, role, referred_by_id, country_code, updated_at });
+      if (e2 && missingCountryColumn(e2)) {
+        ({ error: e2 } = await supabase.from('profiles').insert({ id: userId, role, referred_by_id, updated_at }));
+      }
+      if (e2) throw e2;
     }
 
     res.json({ ok: true });
