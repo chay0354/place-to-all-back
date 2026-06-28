@@ -70,19 +70,23 @@ transactionsRouter.get('/', async (req, res) => {
 
     const useSepolia = process.env.MOONPAY_SANDBOX === 'true' || process.env.MOONPAY_SANDBOX === '1';
     if (useSepolia) {
-      const { data: coinbaseRow } = await supabase
-        .from('coinbase_wallets')
-        .select('wallet_id, default_address, delivery_address')
-        .eq('user_id', userId)
-        .maybeSingle();
-      const address = coinbaseRow?.delivery_address || coinbaseRow?.default_address || coinbaseRow?.wallet_id;
-      if (address && String(address).startsWith('0x')) {
-        const sepoliaTxs = await getSepoliaTransactions(address, 50);
-        const multiplier = Number(process.env.MOONPAY_SANDBOX_DISPLAY_MULTIPLIER) || 100;
-        const scaledTxs = sepoliaTxs.map((tx) => ({ ...tx, amount: tx.amount * multiplier }));
-        const merged = [...list, ...scaledTxs];
-        merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-        return res.json(merged.slice(0, 100));
+      try {
+        const { data: coinbaseRow } = await supabase
+          .from('coinbase_wallets')
+          .select('wallet_id, default_address, delivery_address')
+          .eq('user_id', userId)
+          .maybeSingle();
+        const address = coinbaseRow?.delivery_address || coinbaseRow?.default_address || coinbaseRow?.wallet_id;
+        if (address && String(address).startsWith('0x')) {
+          const sepoliaTxs = await getSepoliaTransactions(address, 50);
+          const multiplier = Number(process.env.MOONPAY_SANDBOX_DISPLAY_MULTIPLIER) || 100;
+          const scaledTxs = sepoliaTxs.map((tx) => ({ ...tx, amount: tx.amount * multiplier }));
+          const merged = [...list, ...scaledTxs];
+          merged.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+          return res.json(merged.slice(0, 100));
+        }
+      } catch (sepoliaErr) {
+        console.warn('[transactions] Sepolia merge skipped:', sepoliaErr?.message || sepoliaErr);
       }
     }
 

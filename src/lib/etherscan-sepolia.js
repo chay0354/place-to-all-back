@@ -12,6 +12,16 @@ function getApiKey() {
   return process.env.ETHERSCAN_API_KEY || process.env.ETHERSCAN_SEPOLIA_API_KEY || '';
 }
 
+async function fetchWithTimeout(url, ms = 8000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Fetch ETH balance for an address on Sepolia.
  * @param {string} address - 0x... EVM address
@@ -33,7 +43,7 @@ export async function getSepoliaBalance(address) {
     apikey: apiKey,
   });
   try {
-    const res = await fetch(`${ETHERSCAN_V2_API}?${params.toString()}`);
+    const res = await fetchWithTimeout(`${ETHERSCAN_V2_API}?${params.toString()}`);
     const data = await res.json().catch(() => ({}));
     if (data.status !== '1' || data.message !== 'OK') return 0;
     const wei = BigInt(data.result ?? 0);
@@ -67,7 +77,7 @@ export async function getSepoliaTransactions(address, limit = 50) {
     apikey: apiKey,
   });
   try {
-    const res = await fetch(`${ETHERSCAN_V2_API}?${params.toString()}`);
+    const res = await fetchWithTimeout(`${ETHERSCAN_V2_API}?${params.toString()}`);
     const data = await res.json().catch(() => ({}));
     if (data.status !== '1' || !Array.isArray(data.result)) return [];
     const addr = address.toLowerCase();
