@@ -33,7 +33,23 @@ function formatAffiliationFeesError(e) {
   if (typeof raw === 'string' && raw.includes('affiliate_take_rate')) {
     return `${raw} Apply migration 014 in Supabase (SQL Editor): back/supabase/migrations/014_affiliate_take_rate.sql`;
   }
+  if (typeof raw === 'string' && raw.includes('affiliation_team_settings')) {
+    return `${raw} Apply migration 021 in Supabase (SQL Editor): back/supabase/migrations/021_affiliation_team_settings.sql`;
+  }
   return raw;
+}
+
+function maskWalletAddress(addr) {
+  const s = String(addr || '').trim();
+  if (!s) return null;
+  if (s.length <= 10) return `${s.slice(0, 2)}${'*'.repeat(Math.max(2, s.length - 4))}${s.slice(-2)}`;
+  return `${s.slice(0, 6)}${'*'.repeat(8)}${s.slice(-4)}`;
+}
+
+function teamMemberRolesForManager(role) {
+  if (role === 'super_super_agent' || role === 'admin') return ['agent', 'super_agent'];
+  if (role === 'super_agent') return ['agent'];
+  return null;
 }
 
 function roleDownlineFilter(role) {
@@ -668,6 +684,175 @@ profileRouter.get('/affiliation-dashboard', async (req, res) => {
     res.json({ kind: responseKind, members: outMembers });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * GET /api/profile/affiliation-team
+ * Super / super-super only: direct agents under the manager with nickname, earn %, masked wallet.
+ */
+profileRouter.get('/affiliation-team', async (req, res) => {
+  try {
+    const userId = req.headers['x-user-id'];
+    if (!userId) return res.status(401).json({ error: 'Missing X-User-Id' });
+
+    const { data: me, error: meErr } = await supabase
+      .from('profiles')
+      .select('id, role, affiliate_take_rate')
+      .eq('id', userId)
+      .maybeSingle();
+    if (meErr) throw meErr;
+    const role = me?.role || 'regular';
+    const allowedRoles = teamMemberRolesForManager(role);
+    if (!allowedRoles) {
+      return res.status(403).json({ error: 'Team management is for super agents only' });
+    }
+
+    const { data: rows, error: qErr } = await supabase
+      .from('profiles')
+      .select('id, username, display_name, role, created_at, referred_by_id')
+      .eq('referred_by_id', userId)
+      .in('role', allowedRoles)
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (qErr) throw qErr;
+
+    const members = rows || [];
+    const memberIds = members.map((m) => m.id);
+
+    let settingsByMember = {};
+    if (memberIds.length) {
+      const { data: settings, error: sErr } = await supabase
+        .from('affiliation_team_settings')
+        .select('member_id, nickname, earn_rate, notes, updated_at')
+        .eq('manager_id', userId)
+        .in('member_id', memberIds);
+      if (sErr) throw sErr;
+      settingsByMember = Object.fromEntries((settings || []).map((s) => [s.member_id, s]));
+    }
+
+    let walletsByUser = {};
+    if (memberIds.length) {
+      const { data: wallets } = await supabase
+        .from('coinbase_wallets')
+        .select('user_id, delivery_address, default_address, wallet_id')
+        .in('user_id', memberIds);
+      for (const w of wallets || []) {
+        if (!walletsByUser[w.user_id]) walletsByUser[w.user_id] = w;
+      }
+    }
+
+    const defaultEarnPercent =
+      me?.affiliate_take_rate != null && me.affiliate_take_rate !== ''
+        ? Math.round(Number(me.affiliate_take_rate) * 10000) / 100
+        : 4;
+
+    const out = await Promise.all(
+      members.map(async (m) => {
+        const { data: u } = await supabase.auth.admin.getUserById(m.id);
+        const setting = settingsByMember[m.id] || null;
+        const walletRow = walletsByUser[m.id] || null;
+        const rawWallet =
+          walletRow?.delivery_address || walletRow?.default_address || walletRow?.wallet_id || null;
+        const earnPercent =
+          setting?.earn_rate != null && setting.earn_rate !== ''
+            ? Math.round(Number(setting.earn_rate) * 10000) / 100
+            : null;
+
+        return {
+          id: m.id,
+          username: m.username,
+          display_name: m.display_name,
+          role: m.role,
+          created_at: m.created_at,
+          email: u?.user?.email || null,
+          nickname: setting?.nickname || null,
+          notes: setting?.notes || null,
+          earnPercent,
+          defaultEarnPercent,
+          walletMasked: maskWalletAddress(rawWallet),
+          joined_at: m.created_at,
+          settingsUpdatedAt: setting?.updated_at || null,
+        };
+      }),
+    );
+
+    res.json({ role, members: out, defaultEarnPercent, maxEarnPercent: 6 });
+  } catch (e) {
+    res.status(500).json({ error: formatAffiliationFeesError(e) });
+  }
+});
+
+/**
+ * PATCH /api/profile/affiliation-team/:memberId
+ * Body: { nickname?: string|null, earnPercent?: number|null, notes?: string|null }
+ */
+profileRouter.patch('/affiliation-team/:memberId', async (req, res) => {
+  try {
+    const userId = req.headers['x-user-id'];
+    if (!userId) return res.status(401).json({ error: 'Missing X-User-Id' });
+
+    const memberId = req.params.memberId;
+    if (!memberId) return res.status(400).json({ error: 'memberId required' });
+
+    const { data: me, error: meErr } = await supabase.from('profiles').select('id, role').eq('id', userId).maybeSingle();
+    if (meErr) throw meErr;
+    const role = me?.role || 'regular';
+    const allowedRoles = teamMemberRolesForManager(role);
+    if (!allowedRoles) {
+      return res.status(403).json({ error: 'Team management is for super agents only' });
+    }
+
+    const { data: member, error: mErr } = await supabase
+      .from('profiles')
+      .select('id, role, referred_by_id')
+      .eq('id', memberId)
+      .maybeSingle();
+    if (mErr) throw mErr;
+    if (!member || member.referred_by_id !== userId || !allowedRoles.includes(member.role)) {
+      return res.status(404).json({ error: 'Agent not found in your team' });
+    }
+
+    const body = req.body || {};
+    const patch = { updated_at: new Date().toISOString() };
+
+    if (Object.prototype.hasOwnProperty.call(body, 'nickname')) {
+      const nick = body.nickname == null ? null : String(body.nickname).trim().slice(0, 64);
+      patch.nickname = nick || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'notes')) {
+      const notes = body.notes == null ? null : String(body.notes).trim().slice(0, 280);
+      patch.notes = notes || null;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'earnPercent')) {
+      if (body.earnPercent === null || body.earnPercent === '') {
+        patch.earn_rate = null;
+      } else {
+        const pct = Number(body.earnPercent);
+        if (Number.isNaN(pct) || pct < 0 || pct > 6) {
+          return res.status(400).json({ error: 'earnPercent must be between 0 and 6' });
+        }
+        patch.earn_rate = pct / 100;
+      }
+    }
+
+    if (Object.keys(patch).length <= 1) {
+      return res.status(400).json({ error: 'Provide nickname, earnPercent, and/or notes' });
+    }
+
+    const { error: upErr } = await supabase.from('affiliation_team_settings').upsert(
+      {
+        manager_id: userId,
+        member_id: memberId,
+        ...patch,
+      },
+      { onConflict: 'manager_id,member_id' },
+    );
+    if (upErr) throw upErr;
+
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: formatAffiliationFeesError(e) });
   }
 });
 

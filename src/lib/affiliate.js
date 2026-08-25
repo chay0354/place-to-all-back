@@ -34,6 +34,50 @@ async function getAffiliateTakeRateForRecipient(userId) {
 }
 
 /**
+ * Optional per-downline override: manager earn_rate on a specific member.
+ * Falls back to the manager’s own affiliate_take_rate / default.
+ */
+async function getManagerEarnRateForMember(managerId, memberId) {
+  const fallback = await getAffiliateTakeRateForRecipient(managerId);
+  if (!managerId || !memberId) return fallback;
+  try {
+    const { data } = await supabase
+      .from('affiliation_team_settings')
+      .select('earn_rate')
+      .eq('manager_id', managerId)
+      .eq('member_id', memberId)
+      .maybeSingle();
+    if (data?.earn_rate != null && data.earn_rate !== '') {
+      const r = Number(data.earn_rate);
+      if (!Number.isNaN(r)) return Math.min(MAX_COMMISSION_TIER_RATE, Math.max(0, r));
+    }
+  } catch {
+    /* table may not exist yet */
+  }
+  return fallback;
+}
+
+/** Direct agent (or closest downline) under `managerId` in the buyer’s referral chain. */
+async function resolveManagedMemberUnderManager(buyerUserId, managerId) {
+  if (!buyerUserId || !managerId) return null;
+  const buyer = await getProfile(buyerUserId);
+  if (!buyer) return null;
+
+  if (buyer.referred_by_id === managerId) return buyer.id;
+
+  let cur = buyer.referred_by_id;
+  let depth = 0;
+  while (cur && depth < 25) {
+    const node = await getProfile(cur);
+    if (!node) return null;
+    if (node.referred_by_id === managerId) return node.id;
+    cur = node.referred_by_id;
+    depth += 1;
+  }
+  return null;
+}
+
+/**
  * Regular buyer: immediate referrer (agent / super_agent / super_super_agent) for the 4% “direct” tier.
  */
 export async function resolveDirectAffiliateId(userId) {
@@ -130,7 +174,8 @@ export async function getBuyCommissionFlags(payerUserId) {
 }
 
 /**
- * Effective tier rates (decimals) for a buyer — each recipient’s single `affiliate_take_rate` (0–6%, default 4%).
+ * Effective tier rates (decimals) for a buyer — each recipient’s `affiliate_take_rate` (0–6%, default 4%),
+ * with optional per-agent overrides from affiliation_team_settings for super / super-super managers.
  */
 export async function getTierRatesForBuyer(buyerUserId) {
   let direct = AFFILIATE_DIRECT_RATE;
@@ -144,11 +189,21 @@ export async function getTierRatesForBuyer(buyerUserId) {
 
   let superUpline = SUPER_AGENT_TIER_RATE;
   const superId = await resolveSuperAgentTierId(buyerUserId);
-  if (superId) superUpline = await getAffiliateTakeRateForRecipient(superId);
+  if (superId) {
+    const managed = await resolveManagedMemberUnderManager(buyerUserId, superId);
+    superUpline = managed
+      ? await getManagerEarnRateForMember(superId, managed)
+      : await getAffiliateTakeRateForRecipient(superId);
+  }
 
   let superSuperUpline = SUPER_SUPER_TIER_RATE;
   const ssId = await resolveSuperSuperAgentTierId(buyerUserId);
-  if (ssId) superSuperUpline = await getAffiliateTakeRateForRecipient(ssId);
+  if (ssId) {
+    const managed = await resolveManagedMemberUnderManager(buyerUserId, ssId);
+    superSuperUpline = managed
+      ? await getManagerEarnRateForMember(ssId, managed)
+      : await getAffiliateTakeRateForRecipient(ssId);
+  }
 
   return { direct, superUpline, superSuperUpline };
 }
