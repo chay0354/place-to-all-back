@@ -72,7 +72,7 @@ async function fetchReferralDescendants(rootUserId, { maxDepth = 25, maxNodes = 
   for (let depth = 0; depth < maxDepth && frontier.length > 0 && members.length < maxNodes; depth += 1) {
     const { data: rows, error } = await supabase
       .from('profiles')
-      .select('id, username, display_name, role, created_at')
+      .select('id, username, display_name, role, created_at, referred_by_id')
       .in('referred_by_id', frontier);
     if (error) throw error;
     const next = [];
@@ -528,7 +528,7 @@ profileRouter.get('/affiliation-dashboard', async (req, res) => {
     } else {
       let downlineQuery = supabase
         .from('profiles')
-        .select('id, username, display_name, role, created_at')
+        .select('id, username, display_name, role, created_at, referred_by_id')
         .eq('referred_by_id', userId)
         .order('created_at', { ascending: false })
         .limit(300);
