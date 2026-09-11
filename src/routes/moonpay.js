@@ -8,11 +8,14 @@ import { getSignedMoonPayUrl, isEvmCurrency, getMoonPayFixedWalletForCurrency } 
 import { applyFee, recordFee } from '../lib/fee.js';
 import { splitAndSendEth } from '../lib/send-eth.js';
 import { supabase } from '../db.js';
-import { getActivePaymentLinkByToken } from '../lib/payment-link.js';
+import { getActivePaymentLinkByToken, deactivatePaymentLinkById } from '../lib/payment-link.js';
 import { getPublicFrontendOrigin } from '../lib/public-frontend-url.js';
 
 const platformReceivesMoonPay = () =>
   process.env.PLATFORM_RECEIVES_MOONPAY === 'true' || process.env.PLATFORM_RECEIVES_MOONPAY === '1';
+
+/** Marks a MoonPay checkout as belonging to a payment link so the webhook can close that link. */
+const PAYMENT_LINK_REF_PREFIX = 'paylink:';
 
 export const moonpayRouter = Router();
 
@@ -167,6 +170,7 @@ moonpayRouter.get('/payment-link-url', async (req, res) => {
       lockAmount: amountLocked,
       redirectUrl,
       externalCustomerId: link.agent_user_id,
+      externalTransactionId: `${PAYMENT_LINK_REF_PREFIX}${link.token}`,
     });
 
     res.json({ url });
@@ -209,6 +213,12 @@ moonpayRouter.post('/webhook', async (req, res) => {
     const currencyCode = rawCode.replace(/_BASE$/, '') || rawCode;
     const amount = Number(data?.quoteCurrencyAmount);
     const moonpayTxId = data?.id;
+
+    const externalRef = String(data?.externalTransactionId || req.body?.externalTransactionId || '');
+    const paymentLinkToken = externalRef.startsWith(PAYMENT_LINK_REF_PREFIX)
+      ? externalRef.slice(PAYMENT_LINK_REF_PREFIX.length)
+      : '';
+    const paymentLink = paymentLinkToken ? await getActivePaymentLinkByToken(paymentLinkToken) : null;
 
     if (!currencyCode || !(amount > 0) || !moonpayTxId) {
       return res.status(400).json({ error: 'Missing currency, amount, or transaction id' });
@@ -275,16 +285,24 @@ moonpayRouter.post('/webhook', async (req, res) => {
       newBalance = netAmount;
     }
 
+    const linkMeta = paymentLink ? { payment_link_id: paymentLink.id, guest_payment_link: true } : {};
+
     await supabase.from('transactions').insert({
       from_wallet_id: null,
       to_wallet_id: walletId,
       amount: netAmount,
       type: 'buy',
-      metadata: { moonpay_transaction_id: moonpayTxId, source: 'moonpay' },
+      metadata: { moonpay_transaction_id: moonpayTxId, source: 'moonpay', ...linkMeta },
     });
 
     if (feeAmount > 0) {
-      await recordFee(currencyCode, feeAmount, { metadata: { source: 'moonpay', moonpay_transaction_id: moonpayTxId } });
+      await recordFee(currencyCode, feeAmount, {
+        metadata: { source: 'moonpay', moonpay_transaction_id: moonpayTxId, ...linkMeta },
+      });
+    }
+
+    if (paymentLink) {
+      await deactivatePaymentLinkById(paymentLink.id);
     }
 
     console.log('[MoonPay webhook] Credited', netAmount, currencyCode, feeAmount ? `(fee ${feeAmount})` : '', 'for user', userId);

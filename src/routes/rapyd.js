@@ -4,7 +4,7 @@ import { supabase } from '../db.js';
 import { createCheckout, verifyWebhookSignature, getRapydConfig } from '../lib/rapyd.js';
 import { fulfillBuyFromFiat } from './buy-sell.js';
 import { isSupportedCrypto } from '../lib/coinbase.js';
-import { assertValidPaymentLinkForAgent } from '../lib/payment-link.js';
+import { assertValidPaymentLinkForAgent, getActivePaymentLinkByToken } from '../lib/payment-link.js';
 import { getPublicFrontendOrigin } from '../lib/public-frontend-url.js';
 
 export const rapydRouter = Router();
@@ -57,11 +57,16 @@ export async function rapydWebhookHandler(req, res) {
   try {
     const creditUserId = checkout.beneficiary_user_id || checkout.user_id;
     const opts = creditUserId !== checkout.user_id ? { creditUserId } : {};
+    const metadata = { source: 'rapyd', rapyd_payment_id: paymentId };
+    if (checkout.payment_link_token) {
+      const link = await getActivePaymentLinkByToken(checkout.payment_link_token);
+      if (link) metadata.payment_link_id = link.id;
+    }
     await fulfillBuyFromFiat(
       checkout.user_id,
       checkout.currency,
       Number(checkout.fiat_amount),
-      { source: 'rapyd', rapyd_payment_id: paymentId },
+      metadata,
       opts
     );
   } catch (e) {

@@ -125,6 +125,7 @@ export function getMoonPayFixedWalletForCurrency(currencyCode) {
  * @param {boolean} [opts.lockAmount] - When true (default), sets MoonPay `lockAmount=true` so the customer cannot change `baseCurrencyAmount` (requires base to be set). See MoonPay buy params.
  * @param {string} [opts.redirectUrl] - Where to send user after completion
  * @param {string} [opts.externalCustomerId] - Your user id
+ * @param {string} [opts.externalTransactionId] - Your reference echoed back on the webhook transaction
  * @param {string} [opts.preferredNetwork] - 'base' to use Base network codes so crypto lands where app/CDP show (default when wallet is used)
  * @returns {string} Full signed URL
  */
@@ -167,6 +168,7 @@ export function getSignedMoonPayUrl(opts) {
   }
   if (opts.redirectUrl) params.set('redirectURL', opts.redirectUrl);
   if (opts.externalCustomerId) params.set('externalCustomerId', opts.externalCustomerId);
+  if (opts.externalTransactionId) params.set('externalTransactionId', opts.externalTransactionId);
   params.set('theme', 'dark');
 
   const queryString = params.toString();
