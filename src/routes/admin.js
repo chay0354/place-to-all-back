@@ -95,6 +95,41 @@ async function enrichProfilesWithEmail(rows) {
   );
 }
 
+/** GET /api/admin/users — every profile (all roles) with email, wallets, invite count. */
+adminRouter.get('/users', async (req, res) => {
+  try {
+    const { data: rows, error } = await supabase
+      .from('profiles')
+      .select('id, username, display_name, referred_by_id, created_at, role')
+      .order('created_at', { ascending: false })
+      .limit(2000);
+
+    if (error) throw error;
+    const list = rows || [];
+    const ids = list.map((r) => r.id);
+    const [countMap, walletMap, withEmail] = await Promise.all([
+      getInvitedCountsByReferrerIds(ids),
+      getWalletSummariesByUserIds(ids),
+      enrichProfilesWithEmail(list),
+    ]);
+    const byId = Object.fromEntries(withEmail.map((r) => [r.id, r]));
+    const enriched = withEmail.map((row) => {
+      const parent = row.referred_by_id ? byId[row.referred_by_id] : null;
+      return {
+        ...row,
+        invitedCount: countMap[row.id] ?? 0,
+        wallets: walletMap[row.id] ?? [],
+        parent_email: parent?.email || null,
+        parent_role: parent?.role || null,
+        parent_display_name: parent?.display_name || parent?.username || null,
+      };
+    });
+    res.json({ users: enriched, total: enriched.length });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 /** GET /api/admin/regular-users — all profiles with role regular */
 adminRouter.get('/regular-users', async (req, res) => {
   try {
