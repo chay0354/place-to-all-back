@@ -15,6 +15,40 @@ async function assertCanManagePaymentLinks(userId) {
   }
 }
 
+/** Same split as link creation: rate set for the agent, plus the earn percent they chose. */
+async function feePercentsForAgent(agentUserId) {
+  const platformPercent = 4;
+  let feeBasePercent = platformPercent;
+  let earnPercent = 4;
+  if (!agentUserId) return { feeBasePercent, earnPercent };
+
+  const { data: me } = await supabase
+    .from('profiles')
+    .select('affiliate_take_rate, referred_by_id')
+    .eq('id', agentUserId)
+    .maybeSingle();
+
+  if (me?.affiliate_take_rate != null && me.affiliate_take_rate !== '') {
+    const n = Math.round(Number(me.affiliate_take_rate) * 10000) / 100;
+    if (Number.isFinite(n)) earnPercent = n;
+  }
+
+  if (me?.referred_by_id) {
+    const { data: setting, error } = await supabase
+      .from('affiliation_team_settings')
+      .select('earn_rate')
+      .eq('manager_id', me.referred_by_id)
+      .eq('member_id', agentUserId)
+      .maybeSingle();
+    if (!error && setting?.earn_rate != null && setting.earn_rate !== '') {
+      const n = Math.round(Number(setting.earn_rate) * 10000) / 100;
+      if (Number.isFinite(n)) feeBasePercent = n;
+    }
+  }
+
+  return { feeBasePercent, earnPercent };
+}
+
 /** POST /api/payment-links — create link */
 paymentLinksRouter.post('/', async (req, res) => {
   try {
@@ -96,6 +130,7 @@ paymentLinksRouter.get('/public/:token', async (req, res) => {
       .maybeSingle();
 
     const depositAddress = cw?.delivery_address || cw?.default_address || null;
+    const fees = await feePercentsForAgent(link.agent_user_id);
 
     res.json({
       title: link.title,
@@ -103,6 +138,8 @@ paymentLinksRouter.get('/public/:token', async (req, res) => {
       amount: link.amount != null ? Number(link.amount) : null,
       depositAddress,
       agentUserId: link.agent_user_id,
+      feeBasePercent: fees.feeBasePercent,
+      earnPercent: fees.earnPercent,
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
