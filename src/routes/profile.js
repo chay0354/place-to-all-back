@@ -867,7 +867,7 @@ profileRouter.get('/affiliation-fees', async (req, res) => {
 
     const { data: me, error: meErr } = await supabase
       .from('profiles')
-      .select('id, role, affiliate_take_rate')
+      .select('id, role, affiliate_take_rate, referred_by_id')
       .eq('id', userId)
       .maybeSingle();
     if (meErr) throw meErr;
@@ -885,11 +885,25 @@ profileRouter.get('/affiliation-fees', async (req, res) => {
         ? Math.round(Number(me.affiliate_take_rate) * 10000) / 100
         : null;
 
+    let uplineEarnPercent = null;
+    if (me?.referred_by_id) {
+      const { data: setting, error: setErr } = await supabase
+        .from('affiliation_team_settings')
+        .select('earn_rate')
+        .eq('manager_id', me.referred_by_id)
+        .eq('member_id', userId)
+        .maybeSingle();
+      if (!setErr && setting?.earn_rate != null && setting.earn_rate !== '') {
+        uplineEarnPercent = Math.round(Number(setting.earn_rate) * 10000) / 100;
+      }
+    }
+
     res.json({
       role,
       defaults,
       hierarchyNote,
       affiliateTakePercent,
+      uplineEarnPercent,
       maxAffiliateTakePercent: 6,
       defaultAffiliateTakePercent: 4,
     });

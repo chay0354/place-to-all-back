@@ -45,11 +45,11 @@ const BUY_AGENT_FEE_RATE = 0.04;
 const BUY_SUPER_UPLINE_RATE = 0.04;
 const BUY_SUPER_SUPER_UPLINE_RATE = 0.04;
 
-/** Max configurable affiliate tier take per recipient (see profiles.affiliate_take_rate). */
-const MAX_TIER = 0.06;
+/** Max configurable affiliate tier take saved on one account (7%). Applied upline totals can add the member’s own choice. */
+const MAX_TIER = 0.14;
 
 function clampTierRate(n) {
-  if (n == null || Number.isNaN(n)) return MAX_TIER;
+  if (n == null || Number.isNaN(n)) return BUY_AGENT_FEE_RATE;
   return Math.min(MAX_TIER, Math.max(0, Number(n)));
 }
 
