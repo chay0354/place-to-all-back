@@ -568,6 +568,18 @@ profileRouter.get('/affiliation-dashboard', async (req, res) => {
       return memberSet.has(buyerId);
     });
 
+    const missingWalletIds = [...new Set(
+      relatedTx.flatMap((tx) => [tx.from_wallet_id, tx.to_wallet_id]).filter((id) => id && !walletById.has(id)),
+    )];
+    if (missingWalletIds.length) {
+      const { data: extraWallets, error: extraErr } = await supabase
+        .from('wallets')
+        .select('id, user_id, currency')
+        .in('id', missingWalletIds);
+      if (extraErr) throw extraErr;
+      for (const wallet of extraWallets || []) walletById.set(wallet.id, wallet);
+    }
+
     const relatedUserIds = new Set(memberIds);
     for (const tx of relatedTx) {
       const fromUser = walletById.get(tx.from_wallet_id)?.user_id || null;
