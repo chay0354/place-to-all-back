@@ -19,7 +19,11 @@ export function readAgentApplication(body) {
   const countryCode = countryCodeOrDefault(body?.countryCode);
   const address = clip(body?.address, 200);
   const city = clip(body?.city, 80);
+  const postalCode = clip(body?.postalCode, 16);
+  const incorporatedOn = clip(body?.incorporatedOn, 10);
+  const taxId = clip(body?.taxId, 40);
   const contactName = clip(body?.contactName);
+  const contactTitle = clip(body?.contactTitle, 80);
   const phone = clip(body?.phone, 24);
   const email = clip(body?.email, 120).toLowerCase();
   const referredBy = clip(body?.referredBy, 80);
@@ -30,7 +34,13 @@ export function readAgentApplication(body) {
   if (companyNumber.length < 3) return { error: 'Enter the company registration number.' };
   if (address.length < 4) return { error: 'Enter the registered address.' };
   if (city.length < 2) return { error: 'Enter the company city.' };
+  if (postalCode.length < 3) return { error: 'Enter the company postal code.' };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(incorporatedOn) || Number.isNaN(Date.parse(incorporatedOn)) || incorporatedOn > new Date().toISOString().slice(0, 10)) {
+    return { error: 'Enter the incorporation date.' };
+  }
+  if (taxId.length < 4) return { error: 'Enter the tax or VAT number.' };
   if (contactName.length < 2) return { error: 'Enter the contact person’s name.' };
+  if (contactTitle.length < 2) return { error: 'Enter the contact person’s role.' };
   if (phoneDigits.length < 7) return { error: 'Enter a contact phone number.' };
   if (!emailOk(email)) return { error: 'Enter a valid contact email.' };
   if (!agreed) return { error: 'A company agreement and our approval are required before an account is opened.' };
@@ -44,7 +54,11 @@ export function readAgentApplication(body) {
       countryCode,
       address,
       city,
+      postalCode,
+      incorporatedOn,
+      taxId,
       contactName,
+      contactTitle,
       phone,
       email,
       referredBy: referredBy || null,
@@ -113,8 +127,10 @@ export async function emailAgentApplication(application) {
     `Company: ${application.companyName}`,
     `Company number: ${application.companyNumber}`,
     `Country: ${application.countryCode}`,
-    `Address: ${application.address}, ${application.city}`,
-    `Contact: ${application.contactName}`,
+    `Address: ${application.address}, ${application.city} ${application.postalCode}`,
+    `Incorporated: ${application.incorporatedOn}`,
+    `Tax or VAT: ${application.taxId}`,
+    `Contact: ${application.contactName}, ${application.contactTitle}`,
     `Phone: ${application.phone}`,
     `Email: ${application.email}`,
     application.referredBy ? `Referred by: ${application.referredBy}` : '',

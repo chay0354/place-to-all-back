@@ -34,13 +34,19 @@ function readSignupProfile(body) {
   const phone = clipProfile(src.phone, 24);
   const dateOfBirth = clipProfile(src.dateOfBirth, 10);
   const idNumber = clipProfile(src.idNumber, 40);
+  const idType = src.idType === 'passport' ? 'passport' : src.idType === 'national_id' ? 'national_id' : '';
+  const idExpiry = clipProfile(src.idExpiry, 10);
+  const nationality = clipProfile(src.nationality, 2).toUpperCase();
+  const postalCode = clipProfile(src.postalCode, 16);
+  const occupation = clipProfile(src.occupation, 80);
   const city = clipProfile(src.city, 80);
   const address = clipProfile(src.address, 200);
-  if (!firstName || !lastName || !phone || !dateOfBirth || !idNumber || !city || !address) {
-    return { error: 'Enter your name, phone, date of birth, ID number, city, and address.' };
+  if (!firstName || !lastName || !phone || !dateOfBirth || !idNumber || !idType || !idExpiry || !nationality || !postalCode || !occupation || !city || !address) {
+    return { error: 'Enter your name, phone, date of birth, identity document, nationality, address, and occupation.' };
   }
   if (phone.replace(/\D/g, '').length < 7) return { error: 'Enter a valid phone number.' };
-  return { firstName, lastName, phone, dateOfBirth, idNumber, city, address };
+  if (postalCode.length < 3) return { error: 'Enter your postal code.' };
+  return { firstName, lastName, phone, dateOfBirth, idNumber, idType, idExpiry, nationality, postalCode, occupation, city, address };
 }
 
 /**
@@ -140,6 +146,11 @@ authRouter.post('/confirm-email', async (req, res) => {
               phone: signup.phone,
               date_of_birth: signup.dateOfBirth,
               id_number: signup.idNumber,
+              id_type: signup.idType,
+              id_expiry: signup.idExpiry,
+              nationality: signup.nationality,
+              postal_code: signup.postalCode,
+              occupation: signup.occupation,
               city: signup.city,
               address_line: signup.address,
               country_code,
