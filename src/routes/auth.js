@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabase } from '../db.js';
 import { countryCodeOrDefault } from '../lib/country.js';
+import { emailAgentApplication, readAgentApplication, saveAgentApplication } from '../lib/agent-application.js';
 
 const authRouter = Router();
 const MAX_AGE_SECONDS = 120; // Only confirm users created in the last 2 minutes
@@ -20,10 +21,63 @@ authRouter.get('/referral-preview', async (req, res) => {
   }
 });
 
+function clipProfile(value, max) {
+  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, max);
+}
+
+/** Personal details collected at signup. Absent for older clients. */
+function readSignupProfile(body) {
+  const src = body?.profile;
+  if (!src || typeof src !== 'object') return null;
+  const firstName = clipProfile(src.firstName, 80);
+  const lastName = clipProfile(src.lastName, 80);
+  const phone = clipProfile(src.phone, 24);
+  const dateOfBirth = clipProfile(src.dateOfBirth, 10);
+  const idNumber = clipProfile(src.idNumber, 40);
+  const city = clipProfile(src.city, 80);
+  const address = clipProfile(src.address, 200);
+  if (!firstName || !lastName || !phone || !dateOfBirth || !idNumber || !city || !address) {
+    return { error: 'Enter your name, phone, date of birth, ID number, city, and address.' };
+  }
+  if (phone.replace(/\D/g, '').length < 7) return { error: 'Enter a valid phone number.' };
+  return { firstName, lastName, phone, dateOfBirth, idNumber, city, address };
+}
+
+/**
+ * POST /api/auth/agent-application
+ * Limited-company details for an agent request. Does not create a login or an agent role.
+ */
+authRouter.post('/agent-application', async (req, res) => {
+  try {
+    const parsed = readAgentApplication(req.body);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    const path = await saveAgentApplication(parsed.application);
+    let emailed = false;
+    try {
+      const mail = await emailAgentApplication(parsed.application);
+      emailed = mail.sent;
+    } catch (mailErr) {
+      console.error('[agent-application] email failed', mailErr?.message || mailErr);
+    }
+    res.json({
+      ok: true,
+      status: 'pending',
+      emailed,
+      companyName: parsed.application.companyName,
+      email: parsed.application.email,
+      id: parsed.application.id,
+      path,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 /**
  * POST /api/auth/confirm-email
- * Body: { userId, role?: 'regular' | 'agent', referredBy?: string }
- * referredBy = agent → regular. referredBy = super_agent → agent. referredBy = super_super_agent → super_agent (no client-chosen role when referredBy is set).
+ * Body: { userId, role?: 'regular' | 'agent', referredBy?: string, profile?: object }
+ * referredBy = agent → regular. referredBy = super_agent → agent. referredBy = super_super_agent → super_agent.
+ * A client-chosen agent role does not open an account; that path is /agent-application.
  */
 authRouter.post('/confirm-email', async (req, res) => {
   try {
@@ -41,10 +95,8 @@ authRouter.post('/confirm-email', async (req, res) => {
       return res.status(400).json({ error: 'User too old to auto-confirm' });
     }
 
-    const { error: updateErr } = await supabase.auth.admin.updateUserById(userId, {
-      email_confirm: true,
-    });
-    if (updateErr) throw updateErr;
+    const signup = readSignupProfile(req.body);
+    if (signup?.error) return res.status(400).json({ error: signup.error });
 
     let role;
     let referred_by_id = null;
@@ -68,11 +120,34 @@ authRouter.post('/confirm-email', async (req, res) => {
         role = 'regular';
         referred_by_id = referredBy;
       }
+    } else if (requestedRole === 'agent') {
+      return res.status(400).json({
+        error: 'Agent accounts are not opened from signup. Submit your company details and wait for approval.',
+      });
     } else {
-      role = requestedRole === 'agent' ? 'agent' : 'regular';
+      role = 'regular';
     }
 
     const country_code = countryCodeOrDefault(countryCode);
+    const display_name = signup ? `${signup.firstName} ${signup.lastName}` : null;
+    const { error: updateErr } = await supabase.auth.admin.updateUserById(userId, {
+      email_confirm: true,
+      ...(signup
+        ? {
+            user_metadata: {
+              first_name: signup.firstName,
+              last_name: signup.lastName,
+              phone: signup.phone,
+              date_of_birth: signup.dateOfBirth,
+              id_number: signup.idNumber,
+              city: signup.city,
+              address_line: signup.address,
+              country_code,
+            },
+          }
+        : {}),
+    });
+    if (updateErr) throw updateErr;
     const missingCountryColumn = (e) =>
       /country_code/i.test(e?.message || '') && /(column|does not exist|schema cache)/i.test(e?.message || '');
 
@@ -81,18 +156,30 @@ authRouter.post('/confirm-email', async (req, res) => {
     if (existing) {
       let { error: e1 } = await supabase
         .from('profiles')
-        .update({ role, referred_by_id, country_code, updated_at })
+        .update({ role, referred_by_id, country_code, ...(display_name ? { display_name } : {}), updated_at })
         .eq('id', userId);
       if (e1 && missingCountryColumn(e1)) {
-        ({ error: e1 } = await supabase.from('profiles').update({ role, referred_by_id, updated_at }).eq('id', userId));
+        ({ error: e1 } = await supabase
+          .from('profiles')
+          .update({ role, referred_by_id, ...(display_name ? { display_name } : {}), updated_at })
+          .eq('id', userId));
       }
       if (e1) throw e1;
     } else {
       let { error: e2 } = await supabase
         .from('profiles')
-        .insert({ id: userId, role, referred_by_id, country_code, updated_at });
+        .insert({
+          id: userId,
+          role,
+          referred_by_id,
+          country_code,
+          ...(display_name ? { display_name } : {}),
+          updated_at,
+        });
       if (e2 && missingCountryColumn(e2)) {
-        ({ error: e2 } = await supabase.from('profiles').insert({ id: userId, role, referred_by_id, updated_at }));
+        ({ error: e2 } = await supabase
+          .from('profiles')
+          .insert({ id: userId, role, referred_by_id, ...(display_name ? { display_name } : {}), updated_at }));
       }
       if (e2) throw e2;
     }
